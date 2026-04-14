@@ -1,4 +1,4 @@
-name: Setup Android UI
+ame: Setup Android UI
 
 on:
   workflow_dispatch:
@@ -12,425 +12,385 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create complete Android app
-        shell: python3 {0}
+      - name: Create UI files
         run: |
-          import os, textwrap
+          python3 << 'PYEOF'
+          import base64, os
 
-          def w(path, content):
+          def w(path, b64):
               os.makedirs(os.path.dirname(path), exist_ok=True)
-              with open(path, "w") as f:
-                  f.write(textwrap.dedent(content).lstrip())
-              print(f"  Created: {path}")
+              with open(path, "wb") as f:
+                  f.write(base64.b64decode(b64))
+              print(f"OK {path}")
 
-          SRC = "android/app/src/main/java/com/netmonitor/pro"
-          RES = "android/app/src/main/res"
+          S = "android/app/src/main/java/com/netmonitor/pro"
+          R = "android/app/src/main/res"
 
-          w(f"{SRC}/core/NetEvent.kt", """
-              package com.netmonitor.pro.core
-
-              data class NetEvent(
-                  val timestamp: Long = System.currentTimeMillis(),
-                  val sourceIp: String = "",
-                  val destIp: String = "",
-                  val protocol: String = "TCP",
-                  val port: Int = 0,
-                  val bytesTransferred: Long = 0,
-                  val direction: String = "OUT",
-                  val appName: String = "unknown",
-                  val riskLevel: Int = 0
-              )
+          w("android/app/build.gradle.kts",
+            """
+          cGx1Z2lucyB7CiAgICBpZCgiY29tLmFuZHJvaWQuYXBwbGljYXRpb24iKQogICAgaWQoIm9yZy5q
+          ZXRicmFpbnMua290bGluLmFuZHJvaWQiKQp9CmFuZHJvaWQgewogICAgbmFtZXNwYWNlID0gImNv
+          bS5uZXRtb25pdG9yLnBybyIKICAgIGNvbXBpbGVTZGsgPSAzNAogICAgZGVmYXVsdENvbmZpZyB7
+          CiAgICAgICAgYXBwbGljYXRpb25JZCA9ICJjb20ubmV0bW9uaXRvci5wcm8iCiAgICAgICAgbWlu
+          U2RrID0gMjYKICAgICAgICB0YXJnZXRTZGsgPSAzNAogICAgICAgIHZlcnNpb25Db2RlID0gMQog
+          ICAgICAgIHZlcnNpb25OYW1lID0gIjEuMC4wIgogICAgfQogICAgYnVpbGRUeXBlcyB7CiAgICAg
+          ICAgcmVsZWFzZSB7CiAgICAgICAgICAgIGlzTWluaWZ5RW5hYmxlZCA9IGZhbHNlCiAgICAgICAg
+          ICAgIHByb2d1YXJkRmlsZXMoZ2V0RGVmYXVsdFByb2d1YXJkRmlsZSgicHJvZ3VhcmQtYW5kcm9p
+          ZC1vcHRpbWl6ZS50eHQiKSwgInByb2d1YXJkLXJ1bGVzLnBybyIpCiAgICAgICAgfQogICAgfQog
+          ICAgY29tcGlsZU9wdGlvbnMgewogICAgICAgIHNvdXJjZUNvbXBhdGliaWxpdHkgPSBKYXZhVmVy
+          c2lvbi5WRVJTSU9OXzE3CiAgICAgICAgdGFyZ2V0Q29tcGF0aWJpbGl0eSA9IEphdmFWZXJzaW9u
+          LlZFUlNJT05fMTcKICAgIH0KICAgIGtvdGxpbk9wdGlvbnMgeyBqdm1UYXJnZXQgPSAiMTciIH0K
+          fQpkZXBlbmRlbmNpZXMgewogICAgaW1wbGVtZW50YXRpb24oImFuZHJvaWR4LmNvcmU6Y29yZS1r
+          dHg6MS4xMy4xIikKICAgIGltcGxlbWVudGF0aW9uKCJhbmRyb2lkeC5hcHBjb21wYXQ6YXBwY29t
+          cGF0OjEuNy4wIikKICAgIGltcGxlbWVudGF0aW9uKCJjb20uZ29vZ2xlLmFuZHJvaWQubWF0ZXJp
+          YWw6bWF0ZXJpYWw6MS4xMi4wIikKICAgIGltcGxlbWVudGF0aW9uKCJhbmRyb2lkeC5yZWN5Y2xl
+          cnZpZXc6cmVjeWNsZXJ2aWV3OjEuMy4yIikKfQo=
           """)
 
-          w(f"{SRC}/core/EventBus.kt", """
-              package com.netmonitor.pro.core
-
-              object EventBus {
-                  private val listeners = mutableListOf<(NetEvent) -> Unit>()
-                  fun subscribe(listener: (NetEvent) -> Unit) { listeners.add(listener) }
-                  fun publish(event: NetEvent) { listeners.toList().forEach { it(event) } }
-                  fun clear() { listeners.clear() }
-              }
+          w(f"{S}/MainActivity.kt",
+            """
+          cGFja2FnZSBjb20ubmV0bW9uaXRvci5wcm8KCmltcG9ydCBhbmRyb2lkLmdyYXBoaWNzLkNvbG9y
+          CmltcG9ydCBhbmRyb2lkLm9zLkJ1bmRsZQppbXBvcnQgYW5kcm9pZC5vcy5IYW5kbGVyCmltcG9y
+          dCBhbmRyb2lkLm9zLkxvb3BlcgppbXBvcnQgYW5kcm9pZC52aWV3LlZpZXcKaW1wb3J0IGFuZHJv
+          aWQud2lkZ2V0LlByb2dyZXNzQmFyCmltcG9ydCBhbmRyb2lkLndpZGdldC5UZXh0VmlldwppbXBv
+          cnQgYW5kcm9pZHguYXBwY29tcGF0LmFwcC5BcHBDb21wYXRBY3Rpdml0eQppbXBvcnQgYW5kcm9p
+          ZHgucmVjeWNsZXJ2aWV3LndpZGdldC5MaW5lYXJMYXlvdXRNYW5hZ2VyCmltcG9ydCBhbmRyb2lk
+          eC5yZWN5Y2xlcnZpZXcud2lkZ2V0LlJlY3ljbGVyVmlldwppbXBvcnQgY29tLmdvb2dsZS5hbmRy
+          b2lkLm1hdGVyaWFsLmNhcmQuTWF0ZXJpYWxDYXJkVmlldwppbXBvcnQgY29tLm5ldG1vbml0b3Iu
+          cHJvLmNvcmUuRXZlbnRCdXMKaW1wb3J0IGNvbS5uZXRtb25pdG9yLnByby5jb3JlLkZlYXR1cmVF
+          eHRyYWN0b3IKaW1wb3J0IGNvbS5uZXRtb25pdG9yLnByby5jb3JlLkxlYWtEZXRlY3RvcgppbXBv
+          cnQgY29tLm5ldG1vbml0b3IucHJvLmNvcmUuTmV0RXZlbnQKaW1wb3J0IGNvbS5uZXRtb25pdG9y
+          LnByby5jb3JlLlJpc2tFbmdpbmUKaW1wb3J0IGNvbS5uZXRtb25pdG9yLnByby5tbC5CZWhhdmlv
+          ck1vZGVsCmltcG9ydCBjb20ubmV0bW9uaXRvci5wcm8udWkuRXZlbnRBZGFwdGVyCmltcG9ydCBj
+          b20ubmV0bW9uaXRvci5wcm8udWkuRmxvd0dyYXBoVmlldwppbXBvcnQga290bGluLnJhbmRvbS5S
+          YW5kb20KCmNsYXNzIE1haW5BY3Rpdml0eSA6IEFwcENvbXBhdEFjdGl2aXR5KCkgewogICAgcHJp
+          dmF0ZSBsYXRlaW5pdCB2YXIgdHZSaXNrU2NvcmU6IFRleHRWaWV3CiAgICBwcml2YXRlIGxhdGVp
+          bml0IHZhciB0dlJpc2tMYWJlbDogVGV4dFZpZXcKICAgIHByaXZhdGUgbGF0ZWluaXQgdmFyIHBy
+          b2dyZXNzUmlzazogUHJvZ3Jlc3NCYXIKICAgIHByaXZhdGUgbGF0ZWluaXQgdmFyIHR2Q29ubmVj
+          dGlvbnM6IFRleHRWaWV3CiAgICBwcml2YXRlIGxhdGVpbml0IHZhciB0dkRhdGE6IFRleHRWaWV3
+          CiAgICBwcml2YXRlIGxhdGVpbml0IHZhciBjYXJkQWxlcnRzOiBNYXRlcmlhbENhcmRWaWV3CiAg
+          ICBwcml2YXRlIGxhdGVpbml0IHZhciB0dkFsZXJ0czogVGV4dFZpZXcKICAgIHByaXZhdGUgbGF0
+          ZWluaXQgdmFyIGZsb3dHcmFwaDogRmxvd0dyYXBoVmlldwogICAgcHJpdmF0ZSB2YWwgaGFuZGxl
+          ciA9IEhhbmRsZXIoTG9vcGVyLmdldE1haW5Mb29wZXIoKSkKICAgIHByaXZhdGUgdmFsIGFkYXB0
+          ZXIgPSBFdmVudEFkYXB0ZXIoKQogICAgcHJpdmF0ZSB2YWwgYWxsRXZlbnRzID0gbXV0YWJsZUxp
+          c3RPZjxOZXRFdmVudD4oKQogICAgcHJpdmF0ZSB2YWwgZXh0cmFjdG9yID0gRmVhdHVyZUV4dHJh
+          Y3RvcigpCiAgICBwcml2YXRlIHZhbCByaXNrRW5naW5lID0gUmlza0VuZ2luZSgpCiAgICBwcml2
+          YXRlIHZhbCBsZWFrRGV0ZWN0b3IgPSBMZWFrRGV0ZWN0b3IoKQogICAgcHJpdmF0ZSB2YWwgbW9k
+          ZWwgPSBCZWhhdmlvck1vZGVsKCkKICAgIHByaXZhdGUgdmFyIHRvdGFsQnl0ZXMgPSAwTAogICAg
+          cHJpdmF0ZSB2YXIgY291bnQgPSAwCiAgICBwcml2YXRlIHZhbCBkZXN0cyA9IGxpc3RPZigiMTQy
+          LjI1MC44MC40NiIsICIzMS4xMy43MS4zNiIsICIxNTcuMjQwLjEuMzUiLCAiMTA0LjI0NC40Mi4x
+          IiwgIjUyLjk0LjIzNi4yNDgiLCAiMTMuMTA3LjQyLjE0IikKICAgIHByaXZhdGUgdmFsIGFwcHMg
+          PSBsaXN0T2YoIkNocm9tZSIsICJXZUNoYXQiLCAiQWxpcGF5IiwgIkRvdXlpbiIsICJUYW9iYW8i
+          LCAiU3lzdGVtIiwgIk1hcHMiLCAiTWFpbCIpCiAgICBwcml2YXRlIHZhbCBwcm90b3MgPSBsaXN0
+          T2YoIlRDUCIsICJUQ1AiLCAiVENQIiwgIlVEUCIsICJIVFRQUyIsICJETlMiKQoKICAgIG92ZXJy
+          aWRlIGZ1biBvbkNyZWF0ZShzYXZlZEluc3RhbmNlU3RhdGU6IEJ1bmRsZT8pIHsKICAgICAgICBz
+          dXBlci5vbkNyZWF0ZShzYXZlZEluc3RhbmNlU3RhdGUpCiAgICAgICAgc2V0Q29udGVudFZpZXco
+          Ui5sYXlvdXQuYWN0aXZpdHlfbWFpbikKICAgICAgICB0dlJpc2tTY29yZSA9IGZpbmRWaWV3QnlJ
+          ZChSLmlkLnR2Umlza1Njb3JlKQogICAgICAgIHR2Umlza0xhYmVsID0gZmluZFZpZXdCeUlkKFIu
+          aWQudHZSaXNrTGFiZWwpCiAgICAgICAgcHJvZ3Jlc3NSaXNrID0gZmluZFZpZXdCeUlkKFIuaWQu
+          cHJvZ3Jlc3NSaXNrKQogICAgICAgIHR2Q29ubmVjdGlvbnMgPSBmaW5kVmlld0J5SWQoUi5pZC50
+          dkNvbm5lY3Rpb25zKQogICAgICAgIHR2RGF0YSA9IGZpbmRWaWV3QnlJZChSLmlkLnR2RGF0YVRy
+          YW5zZmVycmVkKQogICAgICAgIGNhcmRBbGVydHMgPSBmaW5kVmlld0J5SWQoUi5pZC5jYXJkQWxl
+          cnRzKQogICAgICAgIHR2QWxlcnRzID0gZmluZFZpZXdCeUlkKFIuaWQudHZBbGVydHMpCiAgICAg
+          ICAgZmxvd0dyYXBoID0gZmluZFZpZXdCeUlkKFIuaWQuZmxvd0dyYXBoKQogICAgICAgIHZhbCBy
+          diA9IGZpbmRWaWV3QnlJZDxSZWN5Y2xlclZpZXc+KFIuaWQucnZFdmVudHMpCiAgICAgICAgcnYu
+          bGF5b3V0TWFuYWdlciA9IExpbmVhckxheW91dE1hbmFnZXIodGhpcykKICAgICAgICBydi5hZGFw
+          dGVyID0gYWRhcHRlcgogICAgICAgIEV2ZW50QnVzLnN1YnNjcmliZSB7IGUgLT4KICAgICAgICAg
+          ICAgcnVuT25VaVRocmVhZCB7CiAgICAgICAgICAgICAgICBhbGxFdmVudHMuYWRkKGUpCiAgICAg
+          ICAgICAgICAgICBpZiAoYWxsRXZlbnRzLnNpemUgPiAyMDApIGFsbEV2ZW50cy5yZW1vdmVBdCgw
+          KQogICAgICAgICAgICAgICAgY291bnQrKwogICAgICAgICAgICAgICAgdG90YWxCeXRlcyArPSBl
+          LmJ5dGVzVHJhbnNmZXJyZWQKICAgICAgICAgICAgICAgIGFkYXB0ZXIuYWRkRXZlbnQoZSkKICAg
+          ICAgICAgICAgICAgIHVwZGF0ZSgpCiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICAgICAgaGFu
+          ZGxlci5wb3N0KG9iamVjdCA6IFJ1bm5hYmxlIHsKICAgICAgICAgICAgb3ZlcnJpZGUgZnVuIHJ1
+          bigpIHsKICAgICAgICAgICAgICAgIEV2ZW50QnVzLnB1Ymxpc2goTmV0RXZlbnQoCiAgICAgICAg
+          ICAgICAgICAgICAgc291cmNlSXAgPSAiMTkyLjE2OC4xLiR7UmFuZG9tLm5leHRJbnQoMiwgNTAp
+          fSIsCiAgICAgICAgICAgICAgICAgICAgZGVzdElwID0gZGVzdHMucmFuZG9tKCksCiAgICAgICAg
+          ICAgICAgICAgICAgcHJvdG9jb2wgPSBwcm90b3MucmFuZG9tKCksCiAgICAgICAgICAgICAgICAg
+          ICAgcG9ydCA9IGxpc3RPZig4MCwgNDQzLCA4MDgwLCA1MywgMzAwMCwgODQ0MykucmFuZG9tKCks
+          CiAgICAgICAgICAgICAgICAgICAgYnl0ZXNUcmFuc2ZlcnJlZCA9IFJhbmRvbS5uZXh0TG9uZygx
+          MDAsIDUwMDAwMCksCiAgICAgICAgICAgICAgICAgICAgZGlyZWN0aW9uID0gaWYgKFJhbmRvbS5u
+          ZXh0Qm9vbGVhbigpKSAiT1VUIiBlbHNlICJJTiIsCiAgICAgICAgICAgICAgICAgICAgYXBwTmFt
+          ZSA9IGFwcHMucmFuZG9tKCksCiAgICAgICAgICAgICAgICAgICAgcmlza0xldmVsID0gUmFuZG9t
+          Lm5leHRJbnQoMCwgMTAwKQogICAgICAgICAgICAgICAgKSkKICAgICAgICAgICAgICAgIGhhbmRs
+          ZXIucG9zdERlbGF5ZWQodGhpcywgUmFuZG9tLm5leHRMb25nKDEwMDAsIDMwMDApKQogICAgICAg
+          ICAgICB9CiAgICAgICAgfSkKICAgIH0KCiAgICBwcml2YXRlIGZ1biB1cGRhdGUoKSB7CiAgICAg
+          ICAgdHZDb25uZWN0aW9ucy50ZXh0ID0gY291bnQudG9TdHJpbmcoKQogICAgICAgIHR2RGF0YS50
+          ZXh0ID0gd2hlbiB7CiAgICAgICAgICAgIHRvdGFsQnl0ZXMgPiAxMDAwMDAwMDAwIC0+ICIke3Rv
+          dGFsQnl0ZXMgLyAxMDAwMDAwMDAwfSBHQiIKICAgICAgICAgICAgdG90YWxCeXRlcyA+IDEwMDAw
+          MDAgLT4gIiR7dG90YWxCeXRlcyAvIDEwMDAwMDB9IE1CIgogICAgICAgICAgICB0b3RhbEJ5dGVz
+          ID4gMTAwMCAtPiAiJHt0b3RhbEJ5dGVzIC8gMTAwMH0gS0IiCiAgICAgICAgICAgIGVsc2UgLT4g
+          IiR0b3RhbEJ5dGVzIEIiCiAgICAgICAgfQogICAgICAgIHZhbCBmZWF0ID0gZXh0cmFjdG9yLmV4
+          dHJhY3QoYWxsRXZlbnRzLnRha2VMYXN0KDUwKSkKICAgICAgICBtb2RlbC50cmFpbihmZWF0KQog
+          ICAgICAgIHZhbCBzY29yZSA9IHJpc2tFbmdpbmUuZXZhbHVhdGUoZmVhdCkKICAgICAgICB2YWwg
+          bGFiZWwgPSByaXNrRW5naW5lLmdldFJpc2tMYWJlbChzY29yZSkKICAgICAgICB0dlJpc2tTY29y
+          ZS50ZXh0ID0gc2NvcmUudG9TdHJpbmcoKQogICAgICAgIHR2Umlza0xhYmVsLnRleHQgPSBsYWJl
+          bAogICAgICAgIHByb2dyZXNzUmlzay5wcm9ncmVzcyA9IHNjb3JlCiAgICAgICAgdmFsIGMgPSB3
+          aGVuIHsKICAgICAgICAgICAgc2NvcmUgPiA2MCAtPiBDb2xvci5wYXJzZUNvbG9yKCIjRjQ0MzM2
+          IikKICAgICAgICAgICAgc2NvcmUgPiAzMCAtPiBDb2xvci5wYXJzZUNvbG9yKCIjRkY5ODAwIikK
+          ICAgICAgICAgICAgZWxzZSAtPiBDb2xvci5wYXJzZUNvbG9yKCIjNENBRjUwIikKICAgICAgICB9
+          CiAgICAgICAgdHZSaXNrU2NvcmUuc2V0VGV4dENvbG9yKGMpCiAgICAgICAgdHZSaXNrTGFiZWwu
+          c2V0VGV4dENvbG9yKGMpCiAgICAgICAgZmxvd0dyYXBoLmFkZFBvaW50KGFsbEV2ZW50cy5sYXN0
+          T3JOdWxsKCk/LmJ5dGVzVHJhbnNmZXJyZWQ/LnRvRmxvYXQoKSA/OiAwZikKICAgICAgICB2YWwg
+          YWxlcnRzID0gbGVha0RldGVjdG9yLnNjYW4oYWxsRXZlbnRzLnRha2VMYXN0KDEwMCkpCiAgICAg
+          ICAgaWYgKGFsZXJ0cy5pc05vdEVtcHR5KCkpIHsKICAgICAgICAgICAgY2FyZEFsZXJ0cy52aXNp
+          YmlsaXR5ID0gVmlldy5WSVNJQkxFCiAgICAgICAgICAgIHR2QWxlcnRzLnRleHQgPSBhbGVydHMu
+          am9pblRvU3RyaW5nKCJcbiIpIHsgaXQubWVzc2FnZSB9CiAgICAgICAgfSBlbHNlIHsKICAgICAg
+          ICAgICAgY2FyZEFsZXJ0cy52aXNpYmlsaXR5ID0gVmlldy5HT05FCiAgICAgICAgfQogICAgfQoK
+          ICAgIG92ZXJyaWRlIGZ1biBvbkRlc3Ryb3koKSB7CiAgICAgICAgc3VwZXIub25EZXN0cm95KCkK
+          ICAgICAgICBoYW5kbGVyLnJlbW92ZUNhbGxiYWNrc0FuZE1lc3NhZ2VzKG51bGwpCiAgICAgICAg
+          RXZlbnRCdXMuY2xlYXIoKQogICAgfQp9Cg==
           """)
 
-          w(f"{SRC}/core/FeatureVector.kt", """
-              package com.netmonitor.pro.core
-
-              data class FeatureVector(
-                  val avgPacketSize: Double = 0.0,
-                  val connectionFrequency: Double = 0.0,
-                  val uniqueDestinations: Int = 0,
-                  val protocolDistribution: Map<String, Double> = emptyMap(),
-                  val timeOfDay: Int = 0,
-                  val totalBytes: Long = 0
-              )
+          w(f"{S}/ui/EventAdapter.kt",
+            """
+          cGFja2FnZSBjb20ubmV0bW9uaXRvci5wcm8udWkKCmltcG9ydCBhbmRyb2lkLmdyYXBoaWNzLkNv
+          bG9yCmltcG9ydCBhbmRyb2lkLmdyYXBoaWNzLmRyYXdhYmxlLkdyYWRpZW50RHJhd2FibGUKaW1w
+          b3J0IGFuZHJvaWQudmlldy5MYXlvdXRJbmZsYXRlcgppbXBvcnQgYW5kcm9pZC52aWV3LlZpZXcK
+          aW1wb3J0IGFuZHJvaWQudmlldy5WaWV3R3JvdXAKaW1wb3J0IGFuZHJvaWQud2lkZ2V0LlRleHRW
+          aWV3CmltcG9ydCBhbmRyb2lkeC5yZWN5Y2xlcnZpZXcud2lkZ2V0LlJlY3ljbGVyVmlldwppbXBv
+          cnQgY29tLm5ldG1vbml0b3IucHJvLlIKaW1wb3J0IGNvbS5uZXRtb25pdG9yLnByby5jb3JlLk5l
+          dEV2ZW50CmltcG9ydCBqYXZhLnRleHQuU2ltcGxlRGF0ZUZvcm1hdAppbXBvcnQgamF2YS51dGls
+          LkRhdGUKaW1wb3J0IGphdmEudXRpbC5Mb2NhbGUKCmNsYXNzIEV2ZW50QWRhcHRlciA6IFJlY3lj
+          bGVyVmlldy5BZGFwdGVyPEV2ZW50QWRhcHRlci5WSD4oKSB7CiAgICBwcml2YXRlIHZhbCBldmVu
+          dHMgPSBtdXRhYmxlTGlzdE9mPE5ldEV2ZW50PigpCgogICAgZnVuIGFkZEV2ZW50KGV2ZW50OiBO
+          ZXRFdmVudCkgewogICAgICAgIGV2ZW50cy5hZGQoMCwgZXZlbnQpCiAgICAgICAgaWYgKGV2ZW50
+          cy5zaXplID4gNTApIGV2ZW50cy5yZW1vdmVBdChldmVudHMuc2l6ZSAtIDEpCiAgICAgICAgbm90
+          aWZ5RGF0YVNldENoYW5nZWQoKQogICAgfQoKICAgIG92ZXJyaWRlIGZ1biBvbkNyZWF0ZVZpZXdI
+          b2xkZXIocGFyZW50OiBWaWV3R3JvdXAsIHZpZXdUeXBlOiBJbnQpOiBWSCB7CiAgICAgICAgcmV0
+          dXJuIFZIKExheW91dEluZmxhdGVyLmZyb20ocGFyZW50LmNvbnRleHQpLmluZmxhdGUoUi5sYXlv
+          dXQuaXRlbV9ldmVudCwgcGFyZW50LCBmYWxzZSkpCiAgICB9CgogICAgb3ZlcnJpZGUgZnVuIG9u
+          QmluZFZpZXdIb2xkZXIoaG9sZGVyOiBWSCwgcG9zaXRpb246IEludCkgewogICAgICAgIHZhbCBl
+          ID0gZXZlbnRzW3Bvc2l0aW9uXQogICAgICAgIGhvbGRlci5kZXN0LnRleHQgPSAiJHtlLmRlc3RJ
+          cH06JHtlLnBvcnR9IgogICAgICAgIGhvbGRlci5kZXRhaWxzLnRleHQgPSAiJHtlLnByb3RvY29s
+          fSAke2UuZGlyZWN0aW9ufSB2aWEgJHtlLmFwcE5hbWV9IgogICAgICAgIHZhbCBieXRlcyA9IGUu
+          Ynl0ZXNUcmFuc2ZlcnJlZAogICAgICAgIGhvbGRlci5ieXRlcy50ZXh0ID0gd2hlbiB7CiAgICAg
+          ICAgICAgIGJ5dGVzID4gMTAwMDAwMCAtPiAiJHtieXRlcyAvIDEwMDAwMDB9IE1CIgogICAgICAg
+          ICAgICBieXRlcyA+IDEwMDAgLT4gIiR7Ynl0ZXMgLyAxMDAwfSBLQiIKICAgICAgICAgICAgZWxz
+          ZSAtPiAiJGJ5dGVzIEIiCiAgICAgICAgfQogICAgICAgIGhvbGRlci50aW1lLnRleHQgPSBTaW1w
+          bGVEYXRlRm9ybWF0KCJISDptbTpzcyIsIExvY2FsZS5nZXREZWZhdWx0KCkpLmZvcm1hdChEYXRl
+          KGUudGltZXN0YW1wKSkKICAgICAgICB2YWwgZG90ID0gR3JhZGllbnREcmF3YWJsZSgpCiAgICAg
+          ICAgZG90LnNoYXBlID0gR3JhZGllbnREcmF3YWJsZS5PVkFMCiAgICAgICAgZG90LnNldFNpemUo
+          MjQsIDI0KQogICAgICAgIGRvdC5zZXRDb2xvcih3aGVuIHsKICAgICAgICAgICAgZS5yaXNrTGV2
+          ZWwgPiA2MCAtPiBDb2xvci5wYXJzZUNvbG9yKCIjRjQ0MzM2IikKICAgICAgICAgICAgZS5yaXNr
+          TGV2ZWwgPiAzMCAtPiBDb2xvci5wYXJzZUNvbG9yKCIjRkY5ODAwIikKICAgICAgICAgICAgZWxz
+          ZSAtPiBDb2xvci5wYXJzZUNvbG9yKCIjNENBRjUwIikKICAgICAgICB9KQogICAgICAgIGhvbGRl
+          ci5yaXNrRG90LmJhY2tncm91bmQgPSBkb3QKICAgIH0KCiAgICBvdmVycmlkZSBmdW4gZ2V0SXRl
+          bUNvdW50KCkgPSBldmVudHMuc2l6ZQoKICAgIGNsYXNzIFZIKHY6IFZpZXcpIDogUmVjeWNsZXJW
+          aWV3LlZpZXdIb2xkZXIodikgewogICAgICAgIHZhbCBkZXN0OiBUZXh0VmlldyA9IHYuZmluZFZp
+          ZXdCeUlkKFIuaWQudHZFdmVudERlc3QpCiAgICAgICAgdmFsIGRldGFpbHM6IFRleHRWaWV3ID0g
+          di5maW5kVmlld0J5SWQoUi5pZC50dkV2ZW50RGV0YWlscykKICAgICAgICB2YWwgYnl0ZXM6IFRl
+          eHRWaWV3ID0gdi5maW5kVmlld0J5SWQoUi5pZC50dkV2ZW50Qnl0ZXMpCiAgICAgICAgdmFsIHRp
+          bWU6IFRleHRWaWV3ID0gdi5maW5kVmlld0J5SWQoUi5pZC50dkV2ZW50VGltZSkKICAgICAgICB2
+          YWwgcmlza0RvdDogVmlldyA9IHYuZmluZFZpZXdCeUlkKFIuaWQudmlld1Jpc2tEb3QpCiAgICB9
+          Cn0K
           """)
 
-          w(f"{SRC}/core/FeatureExtractor.kt", """
-              package com.netmonitor.pro.core
-
-              import java.util.Calendar
-
-              class FeatureExtractor {
-                  fun extract(events: List<NetEvent>): FeatureVector {
-                      if (events.isEmpty()) return FeatureVector()
-                      val avgSize = events.map { it.bytesTransferred.toDouble() }.average()
-                      val uniqueDest = events.map { it.destIp }.distinct().size
-                      val protocols = events.groupBy { it.protocol }
-                          .mapValues { it.value.size.toDouble() / events.size }
-                      val totalBytes = events.sumOf { it.bytesTransferred }
-                      val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-                      return FeatureVector(avgSize, events.size.toDouble(), uniqueDest, protocols, hour, totalBytes)
-                  }
-              }
+          w(f"{R}/layout/activity_main.xml",
+            """
+          PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPFNjcm9sbFZpZXcgeG1sbnM6
+          YW5kcm9pZD0iaHR0cDovL3NjaGVtYXMuYW5kcm9pZC5jb20vYXBrL3Jlcy9hbmRyb2lkIgogICAg
+          eG1sbnM6YXBwPSJodHRwOi8vc2NoZW1hcy5hbmRyb2lkLmNvbS9hcGsvcmVzLWF1dG8iCiAgICBh
+          bmRyb2lkOmxheW91dF93aWR0aD0ibWF0Y2hfcGFyZW50IgogICAgYW5kcm9pZDpsYXlvdXRfaGVp
+          Z2h0PSJtYXRjaF9wYXJlbnQiCiAgICBhbmRyb2lkOmJhY2tncm91bmQ9IiNGNUY1RjUiPgogIDxM
+          aW5lYXJMYXlvdXQKICAgICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9Im1hdGNoX3BhcmVudCIKICAg
+          ICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0PSJ3cmFwX2NvbnRlbnQiCiAgICAgIGFuZHJvaWQ6b3Jp
+          ZW50YXRpb249InZlcnRpY2FsIgogICAgICBhbmRyb2lkOnBhZGRpbmc9IjE2ZHAiPgogICAgPFRl
+          eHRWaWV3CiAgICAgICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9IndyYXBfY29udGVudCIKICAgICAg
+          ICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9IndyYXBfY29udGVudCIKICAgICAgICBhbmRyb2lkOnRl
+          eHQ9Ik5ldE1vbml0b3IgUHJvIgogICAgICAgIGFuZHJvaWQ6dGV4dFNpemU9IjI2c3AiCiAgICAg
+          ICAgYW5kcm9pZDp0ZXh0U3R5bGU9ImJvbGQiCiAgICAgICAgYW5kcm9pZDp0ZXh0Q29sb3I9IiMx
+          OTc2RDIiCiAgICAgICAgYW5kcm9pZDpsYXlvdXRfbWFyZ2luQm90dG9tPSIyZHAiLz4KICAgIDxU
+          ZXh0VmlldwogICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dpZHRoPSJ3cmFwX2NvbnRlbnQiCiAgICAg
+          ICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0PSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgYW5kcm9pZDp0
+          ZXh0PSJNb25pdG9yaW5nIEFjdGl2ZSIKICAgICAgICBhbmRyb2lkOnRleHRTaXplPSIxM3NwIgog
+          ICAgICAgIGFuZHJvaWQ6dGV4dENvbG9yPSIjNENBRjUwIgogICAgICAgIGFuZHJvaWQ6bGF5b3V0
+          X21hcmdpbkJvdHRvbT0iMTZkcCIvPgogICAgPGNvbS5nb29nbGUuYW5kcm9pZC5tYXRlcmlhbC5j
+          YXJkLk1hdGVyaWFsQ2FyZFZpZXcKICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0ibWF0Y2hf
+          cGFyZW50IgogICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250ZW50IgogICAg
+          ICAgIGFuZHJvaWQ6bGF5b3V0X21hcmdpbkJvdHRvbT0iMTJkcCIKICAgICAgICBhcHA6Y2FyZENv
+          cm5lclJhZGl1cz0iMTJkcCIKICAgICAgICBhcHA6Y2FyZEVsZXZhdGlvbj0iNGRwIj4KICAgICAg
+          PExpbmVhckxheW91dAogICAgICAgICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9Im1hdGNoX3BhcmVu
+          dCIKICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250ZW50IgogICAgICAg
+          ICAgYW5kcm9pZDpvcmllbnRhdGlvbj0idmVydGljYWwiCiAgICAgICAgICBhbmRyb2lkOnBhZGRp
+          bmc9IjIwZHAiPgogICAgICAgIDxUZXh0VmlldwogICAgICAgICAgICBhbmRyb2lkOmxheW91dF93
+          aWR0aD0id3JhcF9jb250ZW50IgogICAgICAgICAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9Indy
+          YXBfY29udGVudCIKICAgICAgICAgICAgYW5kcm9pZDp0ZXh0PSJSaXNrIExldmVsIgogICAgICAg
+          ICAgICBhbmRyb2lkOnRleHRTaXplPSIxM3NwIgogICAgICAgICAgICBhbmRyb2lkOnRleHRDb2xv
+          cj0iIzc1NzU3NSIvPgogICAgICAgIDxUZXh0VmlldwogICAgICAgICAgICBhbmRyb2lkOmlkPSJA
+          K2lkL3R2Umlza1Njb3JlIgogICAgICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0id3JhcF9j
+          b250ZW50IgogICAgICAgICAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9IndyYXBfY29udGVudCIK
+          ICAgICAgICAgICAgYW5kcm9pZDp0ZXh0PSIwIgogICAgICAgICAgICBhbmRyb2lkOnRleHRTaXpl
+          PSI0OHNwIgogICAgICAgICAgICBhbmRyb2lkOnRleHRTdHlsZT0iYm9sZCIKICAgICAgICAgICAg
+          YW5kcm9pZDp0ZXh0Q29sb3I9IiM0Q0FGNTAiLz4KICAgICAgICA8VGV4dFZpZXcKICAgICAgICAg
+          ICAgYW5kcm9pZDppZD0iQCtpZC90dlJpc2tMYWJlbCIKICAgICAgICAgICAgYW5kcm9pZDpsYXlv
+          dXRfd2lkdGg9IndyYXBfY29udGVudCIKICAgICAgICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0
+          PSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgICAgIGFuZHJvaWQ6dGV4dD0iTE9XIgogICAgICAgICAg
+          ICBhbmRyb2lkOnRleHRTaXplPSIxNXNwIgogICAgICAgICAgICBhbmRyb2lkOnRleHRDb2xvcj0i
+          IzRDQUY1MCIvPgogICAgICAgIDxQcm9ncmVzc0JhcgogICAgICAgICAgICBhbmRyb2lkOmlkPSJA
+          K2lkL3Byb2dyZXNzUmlzayIKICAgICAgICAgICAgc3R5bGU9Ij9hbmRyb2lkOmF0dHIvcHJvZ3Jl
+          c3NCYXJTdHlsZUhvcml6b250YWwiCiAgICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dpZHRoPSJt
+          YXRjaF9wYXJlbnQiCiAgICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0iOGRwIgogICAg
+          ICAgICAgICBhbmRyb2lkOmxheW91dF9tYXJnaW5Ub3A9IjhkcCIKICAgICAgICAgICAgYW5kcm9p
+          ZDptYXg9IjEwMCIKICAgICAgICAgICAgYW5kcm9pZDpwcm9ncmVzcz0iMCIvPgogICAgICA8L0xp
+          bmVhckxheW91dD4KICAgIDwvY29tLmdvb2dsZS5hbmRyb2lkLm1hdGVyaWFsLmNhcmQuTWF0ZXJp
+          YWxDYXJkVmlldz4KICAgIDxMaW5lYXJMYXlvdXQKICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0
+          aD0ibWF0Y2hfcGFyZW50IgogICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250
+          ZW50IgogICAgICAgIGFuZHJvaWQ6b3JpZW50YXRpb249Imhvcml6b250YWwiCiAgICAgICAgYW5k
+          cm9pZDpsYXlvdXRfbWFyZ2luQm90dG9tPSIxMmRwIj4KICAgICAgPGNvbS5nb29nbGUuYW5kcm9p
+          ZC5tYXRlcmlhbC5jYXJkLk1hdGVyaWFsQ2FyZFZpZXcKICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0
+          X3dpZHRoPSIwZHAiCiAgICAgICAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9IndyYXBfY29udGVu
+          dCIKICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dlaWdodD0iMSIKICAgICAgICAgIGFuZHJvaWQ6
+          bGF5b3V0X21hcmdpbkVuZD0iNmRwIgogICAgICAgICAgYXBwOmNhcmRDb3JuZXJSYWRpdXM9IjEy
+          ZHAiCiAgICAgICAgICBhcHA6Y2FyZEVsZXZhdGlvbj0iNGRwIj4KICAgICAgICA8TGluZWFyTGF5
+          b3V0CiAgICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dpZHRoPSJtYXRjaF9wYXJlbnQiCiAgICAg
+          ICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250ZW50IgogICAgICAgICAgICBh
+          bmRyb2lkOm9yaWVudGF0aW9uPSJ2ZXJ0aWNhbCIKICAgICAgICAgICAgYW5kcm9pZDpwYWRkaW5n
+          PSIxNmRwIj4KICAgICAgICAgIDxUZXh0VmlldwogICAgICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0
+          X3dpZHRoPSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0
+          PSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgICAgICAgYW5kcm9pZDp0ZXh0PSJDb25uZWN0aW9ucyIK
+          ICAgICAgICAgICAgICBhbmRyb2lkOnRleHRTaXplPSIxMnNwIgogICAgICAgICAgICAgIGFuZHJv
+          aWQ6dGV4dENvbG9yPSIjNzU3NTc1Ii8+CiAgICAgICAgICA8VGV4dFZpZXcKICAgICAgICAgICAg
+          ICBhbmRyb2lkOmlkPSJAK2lkL3R2Q29ubmVjdGlvbnMiCiAgICAgICAgICAgICAgYW5kcm9pZDps
+          YXlvdXRfd2lkdGg9IndyYXBfY29udGVudCIKICAgICAgICAgICAgICBhbmRyb2lkOmxheW91dF9o
+          ZWlnaHQ9IndyYXBfY29udGVudCIKICAgICAgICAgICAgICBhbmRyb2lkOnRleHQ9IjAiCiAgICAg
+          ICAgICAgICAgYW5kcm9pZDp0ZXh0U2l6ZT0iMjRzcCIKICAgICAgICAgICAgICBhbmRyb2lkOnRl
+          eHRTdHlsZT0iYm9sZCIKICAgICAgICAgICAgICBhbmRyb2lkOnRleHRDb2xvcj0iIzE5NzZEMiIv
+          PgogICAgICAgIDwvTGluZWFyTGF5b3V0PgogICAgICA8L2NvbS5nb29nbGUuYW5kcm9pZC5tYXRl
+          cmlhbC5jYXJkLk1hdGVyaWFsQ2FyZFZpZXc+CiAgICAgIDxjb20uZ29vZ2xlLmFuZHJvaWQubWF0
+          ZXJpYWwuY2FyZC5NYXRlcmlhbENhcmRWaWV3CiAgICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0
+          aD0iMGRwIgogICAgICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0PSJ3cmFwX2NvbnRlbnQiCiAg
+          ICAgICAgICBhbmRyb2lkOmxheW91dF93ZWlnaHQ9IjEiCiAgICAgICAgICBhbmRyb2lkOmxheW91
+          dF9tYXJnaW5TdGFydD0iNmRwIgogICAgICAgICAgYXBwOmNhcmRDb3JuZXJSYWRpdXM9IjEyZHAi
+          CiAgICAgICAgICBhcHA6Y2FyZEVsZXZhdGlvbj0iNGRwIj4KICAgICAgICA8TGluZWFyTGF5b3V0
+          CiAgICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dpZHRoPSJtYXRjaF9wYXJlbnQiCiAgICAgICAg
+          ICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250ZW50IgogICAgICAgICAgICBhbmRy
+          b2lkOm9yaWVudGF0aW9uPSJ2ZXJ0aWNhbCIKICAgICAgICAgICAgYW5kcm9pZDpwYWRkaW5nPSIx
+          NmRwIj4KICAgICAgICAgIDxUZXh0VmlldwogICAgICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dp
+          ZHRoPSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0PSJ3
+          cmFwX2NvbnRlbnQiCiAgICAgICAgICAgICAgYW5kcm9pZDp0ZXh0PSJEYXRhIgogICAgICAgICAg
+          ICAgIGFuZHJvaWQ6dGV4dFNpemU9IjEyc3AiCiAgICAgICAgICAgICAgYW5kcm9pZDp0ZXh0Q29s
+          b3I9IiM3NTc1NzUiLz4KICAgICAgICAgIDxUZXh0VmlldwogICAgICAgICAgICAgIGFuZHJvaWQ6
+          aWQ9IkAraWQvdHZEYXRhVHJhbnNmZXJyZWQiCiAgICAgICAgICAgICAgYW5kcm9pZDpsYXlvdXRf
+          d2lkdGg9IndyYXBfY29udGVudCIKICAgICAgICAgICAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9
+          IndyYXBfY29udGVudCIKICAgICAgICAgICAgICBhbmRyb2lkOnRleHQ9IjAgS0IiCiAgICAgICAg
+          ICAgICAgYW5kcm9pZDp0ZXh0U2l6ZT0iMjRzcCIKICAgICAgICAgICAgICBhbmRyb2lkOnRleHRT
+          dHlsZT0iYm9sZCIKICAgICAgICAgICAgICBhbmRyb2lkOnRleHRDb2xvcj0iIzE5NzZEMiIvPgog
+          ICAgICAgIDwvTGluZWFyTGF5b3V0PgogICAgICA8L2NvbS5nb29nbGUuYW5kcm9pZC5tYXRlcmlh
+          bC5jYXJkLk1hdGVyaWFsQ2FyZFZpZXc+CiAgICA8L0xpbmVhckxheW91dD4KICAgIDxjb20uZ29v
+          Z2xlLmFuZHJvaWQubWF0ZXJpYWwuY2FyZC5NYXRlcmlhbENhcmRWaWV3CiAgICAgICAgYW5kcm9p
+          ZDppZD0iQCtpZC9jYXJkQWxlcnRzIgogICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dpZHRoPSJtYXRj
+          aF9wYXJlbnQiCiAgICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0PSJ3cmFwX2NvbnRlbnQiCiAg
+          ICAgICAgYW5kcm9pZDpsYXlvdXRfbWFyZ2luQm90dG9tPSIxMmRwIgogICAgICAgIGFuZHJvaWQ6
+          dmlzaWJpbGl0eT0iZ29uZSIKICAgICAgICBhcHA6Y2FyZENvcm5lclJhZGl1cz0iMTJkcCIKICAg
+          ICAgICBhcHA6Y2FyZEVsZXZhdGlvbj0iNGRwIgogICAgICAgIGFwcDpjYXJkQmFja2dyb3VuZENv
+          bG9yPSIjRkZGM0UwIj4KICAgICAgPExpbmVhckxheW91dAogICAgICAgICAgYW5kcm9pZDpsYXlv
+          dXRfd2lkdGg9Im1hdGNoX3BhcmVudCIKICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0i
+          d3JhcF9jb250ZW50IgogICAgICAgICAgYW5kcm9pZDpvcmllbnRhdGlvbj0idmVydGljYWwiCiAg
+          ICAgICAgICBhbmRyb2lkOnBhZGRpbmc9IjE2ZHAiPgogICAgICAgIDxUZXh0VmlldwogICAgICAg
+          ICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0id3JhcF9jb250ZW50IgogICAgICAgICAgICBhbmRy
+          b2lkOmxheW91dF9oZWlnaHQ9IndyYXBfY29udGVudCIKICAgICAgICAgICAgYW5kcm9pZDp0ZXh0
+          PSJBbGVydHMiCiAgICAgICAgICAgIGFuZHJvaWQ6dGV4dFNpemU9IjE1c3AiCiAgICAgICAgICAg
+          IGFuZHJvaWQ6dGV4dFN0eWxlPSJib2xkIgogICAgICAgICAgICBhbmRyb2lkOnRleHRDb2xvcj0i
+          I0U2NTEwMCIvPgogICAgICAgIDxUZXh0VmlldwogICAgICAgICAgICBhbmRyb2lkOmlkPSJAK2lk
+          L3R2QWxlcnRzIgogICAgICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0id3JhcF9jb250ZW50
+          IgogICAgICAgICAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9IndyYXBfY29udGVudCIKICAgICAg
+          ICAgICAgYW5kcm9pZDpsYXlvdXRfbWFyZ2luVG9wPSI0ZHAiCiAgICAgICAgICAgIGFuZHJvaWQ6
+          dGV4dFNpemU9IjEzc3AiCiAgICAgICAgICAgIGFuZHJvaWQ6dGV4dENvbG9yPSIjQkYzNjBDIi8+
+          CiAgICAgIDwvTGluZWFyTGF5b3V0PgogICAgPC9jb20uZ29vZ2xlLmFuZHJvaWQubWF0ZXJpYWwu
+          Y2FyZC5NYXRlcmlhbENhcmRWaWV3PgogICAgPGNvbS5nb29nbGUuYW5kcm9pZC5tYXRlcmlhbC5j
+          YXJkLk1hdGVyaWFsQ2FyZFZpZXcKICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0ibWF0Y2hf
+          cGFyZW50IgogICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250ZW50IgogICAg
+          ICAgIGFuZHJvaWQ6bGF5b3V0X21hcmdpbkJvdHRvbT0iMTJkcCIKICAgICAgICBhcHA6Y2FyZENv
+          cm5lclJhZGl1cz0iMTJkcCIKICAgICAgICBhcHA6Y2FyZEVsZXZhdGlvbj0iNGRwIj4KICAgICAg
+          PExpbmVhckxheW91dAogICAgICAgICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9Im1hdGNoX3BhcmVu
+          dCIKICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250ZW50IgogICAgICAg
+          ICAgYW5kcm9pZDpvcmllbnRhdGlvbj0idmVydGljYWwiCiAgICAgICAgICBhbmRyb2lkOnBhZGRp
+          bmc9IjE2ZHAiPgogICAgICAgIDxUZXh0VmlldwogICAgICAgICAgICBhbmRyb2lkOmxheW91dF93
+          aWR0aD0id3JhcF9jb250ZW50IgogICAgICAgICAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9Indy
+          YXBfY29udGVudCIKICAgICAgICAgICAgYW5kcm9pZDp0ZXh0PSJOZXR3b3JrIEZsb3ciCiAgICAg
+          ICAgICAgIGFuZHJvaWQ6dGV4dFNpemU9IjEzc3AiCiAgICAgICAgICAgIGFuZHJvaWQ6dGV4dENv
+          bG9yPSIjNzU3NTc1IgogICAgICAgICAgICBhbmRyb2lkOmxheW91dF9tYXJnaW5Cb3R0b209Ijhk
+          cCIvPgogICAgICAgIDxjb20ubmV0bW9uaXRvci5wcm8udWkuRmxvd0dyYXBoVmlldwogICAgICAg
+          ICAgICBhbmRyb2lkOmlkPSJAK2lkL2Zsb3dHcmFwaCIKICAgICAgICAgICAgYW5kcm9pZDpsYXlv
+          dXRfd2lkdGg9Im1hdGNoX3BhcmVudCIKICAgICAgICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0
+          PSIxODBkcCIvPgogICAgICA8L0xpbmVhckxheW91dD4KICAgIDwvY29tLmdvb2dsZS5hbmRyb2lk
+          Lm1hdGVyaWFsLmNhcmQuTWF0ZXJpYWxDYXJkVmlldz4KICAgIDxUZXh0VmlldwogICAgICAgIGFu
+          ZHJvaWQ6bGF5b3V0X3dpZHRoPSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgYW5kcm9pZDpsYXlvdXRf
+          aGVpZ2h0PSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgYW5kcm9pZDp0ZXh0PSJSZWNlbnQgRXZlbnRz
+          IgogICAgICAgIGFuZHJvaWQ6dGV4dFNpemU9IjE3c3AiCiAgICAgICAgYW5kcm9pZDp0ZXh0U3R5
+          bGU9ImJvbGQiCiAgICAgICAgYW5kcm9pZDp0ZXh0Q29sb3I9IiMzMzMzMzMiCiAgICAgICAgYW5k
+          cm9pZDpsYXlvdXRfbWFyZ2luQm90dG9tPSI4ZHAiLz4KICAgIDxhbmRyb2lkeC5yZWN5Y2xlcnZp
+          ZXcud2lkZ2V0LlJlY3ljbGVyVmlldwogICAgICAgIGFuZHJvaWQ6aWQ9IkAraWQvcnZFdmVudHMi
+          CiAgICAgICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9Im1hdGNoX3BhcmVudCIKICAgICAgICBhbmRy
+          b2lkOmxheW91dF9oZWlnaHQ9IndyYXBfY29udGVudCIKICAgICAgICBhbmRyb2lkOm5lc3RlZFNj
+          cm9sbGluZ0VuYWJsZWQ9ImZhbHNlIi8+CiAgPC9MaW5lYXJMYXlvdXQ+CjwvU2Nyb2xsVmlldz4K
           """)
 
-          w(f"{SRC}/core/RiskEngine.kt", """
-              package com.netmonitor.pro.core
-
-              class RiskEngine {
-                  fun evaluate(features: FeatureVector): Int {
-                      var risk = 0
-                      if (features.totalBytes > 10_000_000) risk += 20
-                      if (features.uniqueDestinations > 20) risk += 15
-                      if (features.timeOfDay in 1..5) risk += 25
-                      if (features.connectionFrequency > 100) risk += 20
-                      if (features.avgPacketSize > 5000) risk += 10
-                      return risk.coerceIn(0, 100)
-                  }
-                  fun getRiskLabel(score: Int): String = when {
-                      score < 30 -> "LOW"
-                      score < 60 -> "MEDIUM"
-                      else -> "HIGH"
-                  }
-              }
+          w(f"{R}/layout/item_event.xml",
+            """
+          PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPGNvbS5nb29nbGUuYW5kcm9p
+          ZC5tYXRlcmlhbC5jYXJkLk1hdGVyaWFsQ2FyZFZpZXcKICAgIHhtbG5zOmFuZHJvaWQ9Imh0dHA6
+          Ly9zY2hlbWFzLmFuZHJvaWQuY29tL2Fway9yZXMvYW5kcm9pZCIKICAgIHhtbG5zOmFwcD0iaHR0
+          cDovL3NjaGVtYXMuYW5kcm9pZC5jb20vYXBrL3Jlcy1hdXRvIgogICAgYW5kcm9pZDpsYXlvdXRf
+          d2lkdGg9Im1hdGNoX3BhcmVudCIKICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250
+          ZW50IgogICAgYW5kcm9pZDpsYXlvdXRfbWFyZ2luQm90dG9tPSI4ZHAiCiAgICBhcHA6Y2FyZENv
+          cm5lclJhZGl1cz0iOGRwIgogICAgYXBwOmNhcmRFbGV2YXRpb249IjJkcCI+CiAgPExpbmVhckxh
+          eW91dAogICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0ibWF0Y2hfcGFyZW50IgogICAgICBhbmRy
+          b2lkOmxheW91dF9oZWlnaHQ9IndyYXBfY29udGVudCIKICAgICAgYW5kcm9pZDpvcmllbnRhdGlv
+          bj0iaG9yaXpvbnRhbCIKICAgICAgYW5kcm9pZDpwYWRkaW5nPSIxMmRwIgogICAgICBhbmRyb2lk
+          OmdyYXZpdHk9ImNlbnRlcl92ZXJ0aWNhbCI+CiAgICA8VmlldwogICAgICAgIGFuZHJvaWQ6aWQ9
+          IkAraWQvdmlld1Jpc2tEb3QiCiAgICAgICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9IjEyZHAiCiAg
+          ICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0PSIxMmRwIi8+CiAgICA8TGluZWFyTGF5b3V0CiAg
+          ICAgICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9IjBkcCIKICAgICAgICBhbmRyb2lkOmxheW91dF9o
+          ZWlnaHQ9IndyYXBfY29udGVudCIKICAgICAgICBhbmRyb2lkOmxheW91dF93ZWlnaHQ9IjEiCiAg
+          ICAgICAgYW5kcm9pZDpvcmllbnRhdGlvbj0idmVydGljYWwiCiAgICAgICAgYW5kcm9pZDpsYXlv
+          dXRfbWFyZ2luU3RhcnQ9IjEyZHAiPgogICAgICA8VGV4dFZpZXcKICAgICAgICAgIGFuZHJvaWQ6
+          aWQ9IkAraWQvdHZFdmVudERlc3QiCiAgICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0id3Jh
+          cF9jb250ZW50IgogICAgICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0PSJ3cmFwX2NvbnRlbnQi
+          CiAgICAgICAgICBhbmRyb2lkOnRleHRTaXplPSIxNHNwIgogICAgICAgICAgYW5kcm9pZDp0ZXh0
+          U3R5bGU9ImJvbGQiCiAgICAgICAgICBhbmRyb2lkOnRleHRDb2xvcj0iIzMzMzMzMyIvPgogICAg
+          ICA8VGV4dFZpZXcKICAgICAgICAgIGFuZHJvaWQ6aWQ9IkAraWQvdHZFdmVudERldGFpbHMiCiAg
+          ICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0id3JhcF9jb250ZW50IgogICAgICAgICAgYW5k
+          cm9pZDpsYXlvdXRfaGVpZ2h0PSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgICBhbmRyb2lkOnRleHRT
+          aXplPSIxMnNwIgogICAgICAgICAgYW5kcm9pZDp0ZXh0Q29sb3I9IiM3NTc1NzUiLz4KICAgIDwv
+          TGluZWFyTGF5b3V0PgogICAgPExpbmVhckxheW91dAogICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dp
+          ZHRoPSJ3cmFwX2NvbnRlbnQiCiAgICAgICAgYW5kcm9pZDpsYXlvdXRfaGVpZ2h0PSJ3cmFwX2Nv
+          bnRlbnQiCiAgICAgICAgYW5kcm9pZDpvcmllbnRhdGlvbj0idmVydGljYWwiCiAgICAgICAgYW5k
+          cm9pZDpncmF2aXR5PSJlbmQiPgogICAgICA8VGV4dFZpZXcKICAgICAgICAgIGFuZHJvaWQ6aWQ9
+          IkAraWQvdHZFdmVudEJ5dGVzIgogICAgICAgICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9IndyYXBf
+          Y29udGVudCIKICAgICAgICAgIGFuZHJvaWQ6bGF5b3V0X2hlaWdodD0id3JhcF9jb250ZW50Igog
+          ICAgICAgICAgYW5kcm9pZDp0ZXh0U2l6ZT0iMTJzcCIKICAgICAgICAgIGFuZHJvaWQ6dGV4dFN0
+          eWxlPSJib2xkIgogICAgICAgICAgYW5kcm9pZDp0ZXh0Q29sb3I9IiMxOTc2RDIiLz4KICAgICAg
+          PFRleHRWaWV3CiAgICAgICAgICBhbmRyb2lkOmlkPSJAK2lkL3R2RXZlbnRUaW1lIgogICAgICAg
+          ICAgYW5kcm9pZDpsYXlvdXRfd2lkdGg9IndyYXBfY29udGVudCIKICAgICAgICAgIGFuZHJvaWQ6
+          bGF5b3V0X2hlaWdodD0id3JhcF9jb250ZW50IgogICAgICAgICAgYW5kcm9pZDp0ZXh0U2l6ZT0i
+          MTFzcCIKICAgICAgICAgIGFuZHJvaWQ6dGV4dENvbG9yPSIjOUU5RTlFIi8+CiAgICA8L0xpbmVh
+          ckxheW91dD4KICA8L0xpbmVhckxheW91dD4KPC9jb20uZ29vZ2xlLmFuZHJvaWQubWF0ZXJpYWwu
+          Y2FyZC5NYXRlcmlhbENhcmRWaWV3Pgo=
           """)
 
-          w(f"{SRC}/core/LeakDetector.kt", """
-              package com.netmonitor.pro.core
-
-              class LeakDetector {
-                  fun scan(events: List<NetEvent>): List<LeakAlert> {
-                      val alerts = mutableListOf<LeakAlert>()
-                      for ((dest, destEvents) in events.groupBy { it.destIp }) {
-                          val totalBytes = destEvents.sumOf { it.bytesTransferred }
-                          if (totalBytes > 5_000_000) {
-                              alerts.add(LeakAlert("HIGH_VOLUME", "Large transfer to $dest", "MEDIUM"))
-                          }
-                      }
-                      val unusual = events.filter { it.port !in listOf(80, 443, 8080, 53) }
-                      if (unusual.size > events.size * 0.3 && events.size > 5) {
-                          alerts.add(LeakAlert("UNUSUAL_PORTS", "${'$'}{unusual.size} non-standard ports", "MEDIUM"))
-                      }
-                      return alerts
-                  }
-              }
-
-              data class LeakAlert(val type: String, val message: String, val severity: String)
+          w("server/app.py",
+            """
+          ZnJvbSBmbGFzayBpbXBvcnQgRmxhc2ssIHJlcXVlc3QKCmFwcCA9IEZsYXNrKF9fbmFtZV9fKQpk
+          YiA9IFtdCgoKQGFwcC5yb3V0ZSgnL2luZ2VzdCcsIG1ldGhvZHM9WydQT1NUJ10pCmRlZiBpbmdl
+          c3QoKToKICAgIGRiLmFwcGVuZChyZXF1ZXN0LmdldF9qc29uKGZvcmNlPVRydWUpKQogICAgcmV0
+          dXJuIHsib2siOiBUcnVlfQoKCkBhcHAucm91dGUoJy9zdGF0cycpCmRlZiBzdGF0cygpOgogICAg
+          cmV0dXJuIHsic2l6ZSI6IGxlbihkYil9Cg==
           """)
 
-          w(f"{SRC}/ml/BehaviorModel.kt", """
-              package com.netmonitor.pro.ml
-
-              import com.netmonitor.pro.core.FeatureVector
-
-              class BehaviorModel {
-                  private val baseline = mutableListOf<FeatureVector>()
-                  fun train(features: FeatureVector) {
-                      baseline.add(features)
-                      if (baseline.size > 100) baseline.removeAt(0)
-                  }
-                  fun predict(features: FeatureVector): Double {
-                      if (baseline.isEmpty()) return 0.5
-                      val avgBytes = baseline.map { it.totalBytes.toDouble() }.average()
-                      val avgDest = baseline.map { it.uniqueDestinations.toDouble() }.average()
-                      var anomaly = 0.0
-                      if (avgBytes > 0) anomaly += ((features.totalBytes - avgBytes).coerceAtLeast(0.0)) / avgBytes * 0.5
-                      if (avgDest > 0) anomaly += ((features.uniqueDestinations - avgDest).coerceAtLeast(0.0)) / avgDest * 0.5
-                      return anomaly.coerceIn(0.0, 1.0)
-                  }
-              }
-          """)
-
-          w(f"{SRC}/ui/FlowGraphView.kt", """
-              package com.netmonitor.pro.ui
-
-              import android.content.Context
-              import android.graphics.Canvas
-              import android.graphics.Color
-              import android.graphics.LinearGradient
-              import android.graphics.Paint
-              import android.graphics.Path
-              import android.graphics.Shader
-              import android.util.AttributeSet
-              import android.view.View
-
-              class FlowGraphView @JvmOverloads constructor(
-                  context: Context, attrs: AttributeSet? = null
-              ) : View(context, attrs) {
-
-                  private val dataPoints = mutableListOf<Float>()
-                  private val maxPoints = 30
-                  private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                      color = Color.parseColor("#1976D2"); strokeWidth = 4f; style = Paint.Style.STROKE
-                  }
-                  private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-                  private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                      color = Color.parseColor("#E0E0E0"); strokeWidth = 1f
-                  }
-                  private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                      color = Color.parseColor("#9E9E9E"); textSize = 28f
-                  }
-
-                  fun addPoint(value: Float) {
-                      dataPoints.add(value)
-                      if (dataPoints.size > maxPoints) dataPoints.removeAt(0)
-                      invalidate()
-                  }
-
-                  override fun onDraw(canvas: Canvas) {
-                      super.onDraw(canvas)
-                      val w = width.toFloat(); val h = height.toFloat(); val pad = 20f
-                      for (i in 1..3) { val y = pad + (h - 2*pad)*i/4; canvas.drawLine(pad, y, w-pad, y, gridPaint) }
-                      if (dataPoints.size < 2) { canvas.drawText("Waiting for data...", w/2-100, h/2, textPaint); return }
-                      val maxVal = dataPoints.max().coerceAtLeast(1f)
-                      val stepX = (w - 2*pad) / (maxPoints - 1)
-                      val off = maxPoints - dataPoints.size
-                      val lp = Path(); val fp = Path()
-                      for (i in dataPoints.indices) {
-                          val x = pad + (off+i)*stepX; val y = h - pad - (dataPoints[i]/maxVal)*(h-2*pad)
-                          if (i==0) { lp.moveTo(x,y); fp.moveTo(x,h-pad); fp.lineTo(x,y) } else { lp.lineTo(x,y); fp.lineTo(x,y) }
-                      }
-                      fp.lineTo(pad+(off+dataPoints.size-1)*stepX, h-pad); fp.close()
-                      fillPaint.shader = LinearGradient(0f, pad, 0f, h-pad, Color.parseColor("#401976D2"), Color.parseColor("#001976D2"), Shader.TileMode.CLAMP)
-                      canvas.drawPath(fp, fillPaint); canvas.drawPath(lp, linePaint)
-                  }
-              }
-          """)
-
-          w(f"{SRC}/ui/EventAdapter.kt", """
-              package com.netmonitor.pro.ui
-
-              import android.graphics.Color
-              import android.graphics.drawable.GradientDrawable
-              import android.view.LayoutInflater
-              import android.view.View
-              import android.view.ViewGroup
-              import android.widget.TextView
-              import androidx.recyclerview.widget.RecyclerView
-              import com.netmonitor.pro.R
-              import com.netmonitor.pro.core.NetEvent
-              import java.text.SimpleDateFormat
-              import java.util.Date
-              import java.util.Locale
-
-              class EventAdapter : RecyclerView.Adapter<EventAdapter.VH>() {
-                  private val events = mutableListOf<NetEvent>()
-
-                  fun addEvent(event: NetEvent) {
-                      events.add(0, event)
-                      if (events.size > 50) events.removeAt(events.size - 1)
-                      notifyDataSetChanged()
-                  }
-
-                  override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-                      return VH(LayoutInflater.from(parent.context).inflate(R.layout.item_event, parent, false))
-                  }
-
-                  override fun onBindViewHolder(holder: VH, position: Int) {
-                      val e = events[position]
-                      holder.dest.text = "${'$'}{e.destIp}:${'$'}{e.port}"
-                      holder.details.text = "${'$'}{e.protocol} ${'$'}{e.direction} via ${'$'}{e.appName}"
-                      val bytes = e.bytesTransferred
-                      holder.bytes.text = when {
-                          bytes > 1_000_000 -> "${'$'}{bytes / 1_000_000} MB"
-                          bytes > 1_000 -> "${'$'}{bytes / 1_000} KB"
-                          else -> "${'$'}bytes B"
-                      }
-                      holder.time.text = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(e.timestamp))
-                      val dot = GradientDrawable()
-                      dot.shape = GradientDrawable.OVAL
-                      dot.setColor(when {
-                          e.riskLevel > 60 -> Color.parseColor("#F44336")
-                          e.riskLevel > 30 -> Color.parseColor("#FF9800")
-                          else -> Color.parseColor("#4CAF50")
-                      })
-                      holder.riskDot.background = dot
-                  }
-
-                  override fun getItemCount() = events.size
-
-                  class VH(v: View) : RecyclerView.ViewHolder(v) {
-                      val dest: TextView = v.findViewById(R.id.tvEventDest)
-                      val details: TextView = v.findViewById(R.id.tvEventDetails)
-                      val bytes: TextView = v.findViewById(R.id.tvEventBytes)
-                      val time: TextView = v.findViewById(R.id.tvEventTime)
-                      val riskDot: View = v.findViewById(R.id.viewRiskDot)
-                  }
-              }
-          """)
-
-          w(f"{SRC}/MainActivity.kt", """
-              package com.netmonitor.pro
-
-              import android.graphics.Color
-              import android.os.Bundle
-              import android.os.Handler
-              import android.os.Looper
-              import android.view.View
-              import android.widget.ProgressBar
-              import android.widget.TextView
-              import androidx.appcompat.app.AppCompatActivity
-              import androidx.recyclerview.widget.LinearLayoutManager
-              import androidx.recyclerview.widget.RecyclerView
-              import com.google.android.material.card.MaterialCardView
-              import com.netmonitor.pro.core.*
-              import com.netmonitor.pro.ml.BehaviorModel
-              import com.netmonitor.pro.ui.EventAdapter
-              import com.netmonitor.pro.ui.FlowGraphView
-              import kotlin.random.Random
-
-              class MainActivity : AppCompatActivity() {
-                  private lateinit var tvRiskScore: TextView
-                  private lateinit var tvRiskLabel: TextView
-                  private lateinit var progressRisk: ProgressBar
-                  private lateinit var tvConnections: TextView
-                  private lateinit var tvData: TextView
-                  private lateinit var cardAlerts: MaterialCardView
-                  private lateinit var tvAlerts: TextView
-                  private lateinit var flowGraph: FlowGraphView
-                  private val handler = Handler(Looper.getMainLooper())
-                  private val adapter = EventAdapter()
-                  private val allEvents = mutableListOf<NetEvent>()
-                  private val extractor = FeatureExtractor()
-                  private val riskEngine = RiskEngine()
-                  private val leakDetector = LeakDetector()
-                  private val model = BehaviorModel()
-                  private var totalBytes = 0L
-                  private var count = 0
-                  private val dests = listOf("142.250.80.46","31.13.71.36","157.240.1.35","104.244.42.1","52.94.236.248","13.107.42.14","185.60.218.35","151.101.1.140")
-                  private val apps = listOf("Chrome","WeChat","Alipay","Douyin","Taobao","System","Maps","Mail")
-                  private val protos = listOf("TCP","TCP","TCP","UDP","HTTPS","DNS")
-
-                  override fun onCreate(savedInstanceState: Bundle?) {
-                      super.onCreate(savedInstanceState)
-                      setContentView(R.layout.activity_main)
-                      tvRiskScore = findViewById(R.id.tvRiskScore)
-                      tvRiskLabel = findViewById(R.id.tvRiskLabel)
-                      progressRisk = findViewById(R.id.progressRisk)
-                      tvConnections = findViewById(R.id.tvConnections)
-                      tvData = findViewById(R.id.tvDataTransferred)
-                      cardAlerts = findViewById(R.id.cardAlerts)
-                      tvAlerts = findViewById(R.id.tvAlerts)
-                      flowGraph = findViewById(R.id.flowGraph)
-                      val rv = findViewById<RecyclerView>(R.id.rvEvents)
-                      rv.layoutManager = LinearLayoutManager(this)
-                      rv.adapter = adapter
-                      EventBus.subscribe { e -> runOnUiThread {
-                          allEvents.add(e); if (allEvents.size > 200) allEvents.removeAt(0)
-                          count++; totalBytes += e.bytesTransferred; adapter.addEvent(e); update()
-                      }}
-                      handler.post(object : Runnable { override fun run() {
-                          EventBus.publish(NetEvent(sourceIp="192.168.1.${'$'}{Random.nextInt(2,50)}", destIp=dests.random(), protocol=protos.random(),
-                              port=listOf(80,443,8080,53,3000,8443,9090).random(), bytesTransferred=Random.nextLong(100,500_000),
-                              direction=if(Random.nextBoolean()) "OUT" else "IN", appName=apps.random(), riskLevel=Random.nextInt(0,100)))
-                          handler.postDelayed(this, Random.nextLong(1000, 3000))
-                      }})
-                  }
-                  private fun update() {
-                      tvConnections.text = count.toString()
-                      tvData.text = when { totalBytes>1_000_000_000->"${'$'}{totalBytes/1_000_000_000} GB"; totalBytes>1_000_000->"${'$'}{totalBytes/1_000_000} MB"; totalBytes>1_000->"${'$'}{totalBytes/1_000} KB"; else->"${'$'}totalBytes B" }
-                      val feat = extractor.extract(allEvents.takeLast(50)); model.train(feat)
-                      val score = riskEngine.evaluate(feat); val label = riskEngine.getRiskLabel(score)
-                      tvRiskScore.text = score.toString(); tvRiskLabel.text = label; progressRisk.progress = score
-                      val c = when { score>60->Color.parseColor("#F44336"); score>30->Color.parseColor("#FF9800"); else->Color.parseColor("#4CAF50") }
-                      tvRiskScore.setTextColor(c); tvRiskLabel.setTextColor(c)
-                      flowGraph.addPoint(allEvents.lastOrNull()?.bytesTransferred?.toFloat() ?: 0f)
-                      val alerts = leakDetector.scan(allEvents.takeLast(100))
-                      if (alerts.isNotEmpty()) { cardAlerts.visibility = View.VISIBLE; tvAlerts.text = alerts.joinToString("\n") { it.message } }
-                      else { cardAlerts.visibility = View.GONE }
-                  }
-                  override fun onDestroy() { super.onDestroy(); handler.removeCallbacksAndMessages(null); EventBus.clear() }
-              }
-          """)
-
-          # ===================== LAYOUTS =====================
-
-          w(f"{RES}/layout/activity_main.xml", """
-              <?xml version="1.0" encoding="utf-8"?>
-              <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-                  xmlns:app="http://schemas.android.com/apk/res-auto"
-                  android:layout_width="match_parent" android:layout_height="match_parent" android:background="#F5F5F5">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
-                  <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="NetMonitor Pro" android:textSize="26sp" android:textStyle="bold" android:textColor="#1976D2" android:layout_marginBottom="2dp"/>
-                  <TextView android:id="@+id/tvStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Monitoring Active" android:textSize="13sp" android:textColor="#4CAF50" android:layout_marginBottom="16dp"/>
-                  <com.google.android.material.card.MaterialCardView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="12dp" app:cardCornerRadius="12dp" app:cardElevation="4dp">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="20dp">
-                      <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Risk Level" android:textSize="13sp" android:textColor="#757575"/>
-                      <TextView android:id="@+id/tvRiskScore" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textSize="48sp" android:textStyle="bold" android:textColor="#4CAF50"/>
-                      <TextView android:id="@+id/tvRiskLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="LOW" android:textSize="15sp" android:textColor="#4CAF50"/>
-                      <ProgressBar android:id="@+id/progressRisk" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="8dp" android:layout_marginTop="8dp" android:max="100" android:progress="0"/>
-                    </LinearLayout>
-                  </com.google.android.material.card.MaterialCardView>
-                  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:layout_marginBottom="12dp">
-                    <com.google.android.material.card.MaterialCardView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginEnd="6dp" app:cardCornerRadius="12dp" app:cardElevation="4dp">
-                      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Connections" android:textSize="12sp" android:textColor="#757575"/>
-                        <TextView android:id="@+id/tvConnections" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textSize="24sp" android:textStyle="bold" android:textColor="#1976D2"/>
-                      </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-                    <com.google.android.material.card.MaterialCardView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="6dp" app:cardCornerRadius="12dp" app:cardElevation="4dp">
-                      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Data" android:textSize="12sp" android:textColor="#757575"/>
-                        <TextView android:id="@+id/tvDataTransferred" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0 KB" android:textSize="24sp" android:textStyle="bold" android:textColor="#1976D2"/>
-                      </LinearLayout>
-                    </com.google.android.material.card.MaterialCardView>
-                  </LinearLayout>
-                  <com.google.android.material.card.MaterialCardView android:id="@+id/cardAlerts" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="12dp" android:visibility="gone" app:cardCornerRadius="12dp" app:cardElevation="4dp" app:cardBackgroundColor="#FFF3E0">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
-                      <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Alerts" android:textSize="15sp" android:textStyle="bold" android:textColor="#E65100"/>
-                      <TextView android:id="@+id/tvAlerts" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textSize="13sp" android:textColor="#BF360C"/>
-                    </LinearLayout>
-                  </com.google.android.material.card.MaterialCardView>
-                  <com.google.android.material.card.MaterialCardView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="12dp" app:cardCornerRadius="12dp" app:cardElevation="4dp">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
-                      <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Network Flow" android:textSize="13sp" android:textColor="#757575" android:layout_marginBottom="8dp"/>
-                      <com.netmonitor.pro.ui.FlowGraphView android:id="@+id/flowGraph" android:layout_width="match_parent" android:layout_height="180dp"/>
-                    </LinearLayout>
-                  </com.google.android.material.card.MaterialCardView>
-                  <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Recent Events" android:textSize="17sp" android:textStyle="bold" android:textColor="#333333" android:layout_marginBottom="8dp"/>
-                  <androidx.recyclerview.widget.RecyclerView android:id="@+id/rvEvents" android:layout_width="match_parent" android:layout_height="wrap_content" android:nestedScrollingEnabled="false"/>
-                </LinearLayout>
-              </ScrollView>
-          """)
-
-          w(f"{RES}/layout/item_event.xml", """
-              <?xml version="1.0" encoding="utf-8"?>
-              <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
-                  android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="8dp" app:cardCornerRadius="8dp" app:cardElevation="2dp">
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical">
-                  <View android:id="@+id/viewRiskDot" android:layout_width="12dp" android:layout_height="12dp"/>
-                  <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:layout_marginStart="12dp">
-                    <TextView android:id="@+id/tvEventDest" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="14sp" android:textStyle="bold" android:textColor="#333333"/>
-                    <TextView android:id="@+id/tvEventDetails" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="#757575"/>
-                  </LinearLayout>
-                  <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="end">
-                    <TextView android:id="@+id/tvEventBytes" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="12sp" android:textStyle="bold" android:textColor="#1976D2"/>
-                    <TextView android:id="@+id/tvEventTime" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textSize="11sp" android:textColor="#9E9E9E"/>
-                  </LinearLayout>
-                </LinearLayout>
-              </com.google.android.material.card.MaterialCardView>
-          """)
-
-          w("server/app.py", 'from flask import Flask, request\n\napp = Flask(__name__)\ndb = []\n\n\n@app.route(\'/ingest\', methods=[\'POST\'])\ndef ingest():\n    db.append(request.json)\n    return {"ok": True}\n\n\n@app.route(\'/stats\')\ndef stats():\n    return {"size": len(db)}\n')
-
-          print("\nAll files created successfully!")
+          PYEOF
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add android/ server/
-          git status
-          git diff --cached --quiet && echo "No changes" || git commit -m "feat: add complete Android UI with network monitoring dashboard"
+          git diff --cached --name-only
+          CHANGED=$(git diff --cached --name-only | wc -l)
+          echo "Changed: $CHANGED files"
+          if [ "$CHANGED" -eq 0 ]; then
+            echo "::error::No files changed"
+            exit 1
+          fi
+          git commit -m "feat: add Android UI with network monitoring dashboard"
           git push
