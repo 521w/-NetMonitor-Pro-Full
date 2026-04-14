@@ -1,3 +1,4 @@
+cat > server/app.py << 'EOF'
 from flask import Flask, request
 
 app = Flask(__name__)
@@ -13,3 +14,4 @@ def ingest():
 @app.route('/stats')
 def stats():
     return {"size": len(db)}
+EOF
