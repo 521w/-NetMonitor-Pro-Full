@@ -1,3 +1,5 @@
+package com.netmonitor.pro.core
+
 class FeatureExtractor {
 
     fun extract(list: List<NetEvent>): FeatureVector {

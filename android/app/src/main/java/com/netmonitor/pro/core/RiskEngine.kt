@@ -1,3 +1,5 @@
+package com.netmonitor.pro.core
+
 class RiskEngine {
     fun score(f: FeatureVector): Int {
         var s = 0

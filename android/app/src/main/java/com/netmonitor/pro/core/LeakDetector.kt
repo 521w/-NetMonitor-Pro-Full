@@ -1,3 +1,5 @@
+package com.netmonitor.pro.core
+
 class LeakDetector {
     fun leak(iface:String, dst:String): Boolean {
         val vpn = iface.contains("tun")

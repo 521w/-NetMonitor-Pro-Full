@@ -1,3 +1,7 @@
+package com.netmonitor.pro.ui
+
+import com.netmonitor.pro.core.NetEvent
+
 import android.content.*
 import android.graphics.*
 import android.view.*

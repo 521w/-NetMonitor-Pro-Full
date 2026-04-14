@@ -1,3 +1,9 @@
+package com.netmonitor.pro
+
+import com.netmonitor.pro.core.*
+import com.netmonitor.pro.ml.BehaviorModel
+import com.netmonitor.pro.ui.FlowGraphView
+
 import android.os.*
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity

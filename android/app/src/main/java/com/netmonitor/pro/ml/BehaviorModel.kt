@@ -1,3 +1,7 @@
+package com.netmonitor.pro.ml
+
+import com.netmonitor.pro.core.FeatureVector
+
 class BehaviorModel {
 
     private val base = mutableMapOf<Int, FeatureVector>()

@@ -1,3 +1,5 @@
+package com.netmonitor.pro.core
+
 object EventBus {
     private val q = mutableListOf<NetEvent>()
 

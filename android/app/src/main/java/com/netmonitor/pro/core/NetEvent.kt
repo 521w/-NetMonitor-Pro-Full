@@ -1,3 +1,5 @@
+package com.netmonitor.pro.core
+
 data class NetEvent(
     val pid: Int,
     val uid: Int,
