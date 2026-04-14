@@ -55,17 +55,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev make gcc
       - name: Obtain vmlinux.h
         run: |
-          if [ -f ebpf/vmlinux.h ]; then exit 0; fi
-          for URL in \
-            "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86_64/vmlinux.h" \
-            "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86/vmlinux.h"; do
-            if curl -fsSL --retry 3 "$URL" -o ebpf/vmlinux.h 2>/dev/null; then
-              LINES=$(wc -l < ebpf/vmlinux.h)
-              if [ "$LINES" -gt 1000 ]; then echo "vmlinux.h OK ($LINES lines)"; exit 0; fi
-              rm -f ebpf/vmlinux.h
-            fi
-          done
-          echo "::error::Cannot obtain vmlinux.h"; exit 1
+          if [ -f ebpf/vmlinux.h ]; then echo "vmlinux.h exists"; exit 0; fi
+          echo "Cloning libbpf/vmlinux.h repo (sparse, x86 only)..."
+          git clone --depth=1 --filter=blob:none --sparse \
+            https://github.com/libbpf/vmlinux.h.git /tmp/vmlinux-repo
+          cd /tmp/vmlinux-repo
+          git sparse-checkout set include/x86
+          cp include/x86/vmlinux.h "$GITHUB_WORKSPACE/ebpf/vmlinux.h"
+          LINES=$(wc -l < "$GITHUB_WORKSPACE/ebpf/vmlinux.h")
+          echo "vmlinux.h obtained ($LINES lines)"
       - name: Compile eBPF
         working-directory: ebpf
         run: |
