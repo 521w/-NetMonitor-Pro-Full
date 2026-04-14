@@ -73,29 +73,75 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            clang llvm libbpf-dev linux-tools-common \
-            linux-headers-$(uname -r) make gcc
+            clang llvm libbpf-dev make gcc
 
-      - name: Generate vmlinux.h
+      - name: Generate vmlinux.h (three-tier fallback)
         run: |
-          if [ ! -f ebpf/vmlinux.h ]; then
-            echo "⚙️ Generating vmlinux.h from kernel BTF..."
-            if [ -f /sys/kernel/btf/vmlinux ]; then
-              bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h
-              echo "✅ vmlinux.h generated ($(wc -l < ebpf/vmlinux.h) lines)"
+          if [ -f ebpf/vmlinux.h ]; then
+            echo "✅ vmlinux.h already exists in repo, skipping generation"
+            exit 0
+          fi
+
+          GENERATED=false
+
+          # ── Tier 1: bpftool（先检查命令是否存在，再尝试执行）──
+          if command -v bpftool &>/dev/null && [ -f /sys/kernel/btf/vmlinux ]; then
+            echo "🔧 Tier 1: Generating vmlinux.h via bpftool..."
+            if bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h 2>/dev/null; then
+              echo "✅ vmlinux.h generated via bpftool ($(wc -l < ebpf/vmlinux.h) lines)"
+              GENERATED=true
             else
-              echo "⚠️ /sys/kernel/btf/vmlinux not found, using minimal stub..."
-              cat > ebpf/vmlinux.h << 'STUB'
-          #ifndef __VMLINUX_H__
-          #define __VMLINUX_H__
-          typedef unsigned int u32;
-          typedef unsigned long long u64;
-          struct pt_regs {};
-          #endif
-          STUB
-              echo "⚠️ Using minimal vmlinux.h stub for CI"
+              echo "⚠️ bpftool failed, trying next tier..."
+              rm -f ebpf/vmlinux.h
+            fi
+          else
+            echo "⚠️ bpftool or BTF not available, skipping Tier 1"
+          fi
+
+          # ── Tier 2: 从 libbpf/vmlinux.h 仓库下载预生成的头文件 ──
+          if [ "$GENERATED" = false ]; then
+            echo "🌐 Tier 2: Downloading vmlinux.h from libbpf/vmlinux.h repo..."
+            VMLINUX_URL="https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/vmlinux/vmlinux.h"
+            if curl -fsSL "$VMLINUX_URL" -o ebpf/vmlinux.h 2>/dev/null; then
+              echo "✅ vmlinux.h downloaded ($(wc -l < ebpf/vmlinux.h) lines)"
+              GENERATED=true
+            else
+              echo "⚠️ Download failed, trying next tier..."
+              rm -f ebpf/vmlinux.h
             fi
           fi
+
+          # ── Tier 3: 精准 stub（覆盖 netmon_kern.c 实际用到的类型）──
+          if [ "$GENERATED" = false ]; then
+            echo "📝 Tier 3: Creating minimal vmlinux.h stub..."
+            cat > ebpf/vmlinux.h << 'STUB'
+          #ifndef __VMLINUX_H__
+          #define __VMLINUX_H__
+
+          /* Minimal vmlinux.h stub for CI — covers types used by netmon_kern.c */
+          typedef unsigned char       u8;
+          typedef unsigned short      u16;
+          typedef unsigned int        u32;
+          typedef unsigned long long  u64;
+          typedef int                 s32;
+          typedef long long           s64;
+
+          typedef u32 __u32;
+          typedef u64 __u64;
+
+          struct pt_regs {
+              long regs[31];
+          };
+
+          #endif /* __VMLINUX_H__ */
+          STUB
+            echo "✅ Minimal vmlinux.h stub created"
+          fi
+
+          echo ""
+          echo "📊 vmlinux.h stats:"
+          wc -l ebpf/vmlinux.h
+          head -5 ebpf/vmlinux.h
 
       - name: Compile eBPF kernel module
         working-directory: ebpf
@@ -107,6 +153,7 @@ jobs:
             -I/usr/include/$(uname -m)-linux-gnu \
             -c netmon_kern.c \
             -o netmon_kern.o
+          echo ""
           echo "✅ eBPF object compiled successfully"
           file netmon_kern.o
           ls -lh netmon_kern.o
