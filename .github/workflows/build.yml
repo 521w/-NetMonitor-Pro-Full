@@ -12,286 +12,108 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ============================================================
-  # Job 1: Kotlin 源码编译检查（无 Gradle 项目，用 kotlinc 验证语法）
-  # ============================================================
-  check-kotlin:
-    name: 🤖 Check Kotlin
+  build-android:
+    name: "Build Android APK"
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+          build-root-directory: android
+      - name: Build Debug APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Build Release APK
+        working-directory: android
+        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetMonitor-Pro-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetMonitor-Pro-release
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
 
-      - name: Install Kotlin compiler
-        run: |
-          curl -fsSL "https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip" -o kotlin.zip
-          unzip -q kotlin.zip -d /opt
-          echo "/opt/kotlinc/bin" >> $GITHUB_PATH
-
-      - name: Verify Kotlin syntax (all .kt files)
-        run: |
-          echo "🔍 Collecting Kotlin source files..."
-          find android/ -name '*.kt' -type f | tee /tmp/kt_files.txt
-          FILE_COUNT=$(wc -l < /tmp/kt_files.txt)
-          echo "📄 Found $FILE_COUNT Kotlin files"
-
-          echo ""
-          echo "🔨 Compiling Kotlin sources (syntax + type check)..."
-          kotlinc -no-stdlib \
-                  -nowarn \
-                  $(cat /tmp/kt_files.txt | tr '\n' ' ') \
-                  -d /tmp/kotlin_out 2>&1 || true
-          echo "✅ Kotlin syntax check completed"
-
-      - name: Lint with ktlint
-        continue-on-error: true
-        run: |
-          curl -fsSL "https://github.com/pinterest/ktlint/releases/download/1.5.0/ktlint" -o /usr/local/bin/ktlint
-          chmod +x /usr/local/bin/ktlint
-          echo "🧹 Running ktlint on android/ ..."
-          ktlint "android/**/*.kt" --reporter=plain || true
-
-  # ============================================================
-  # Job 2: eBPF 内核模块编译
-  # ============================================================
   build-ebpf:
-    name: 🔬 Build eBPF
+    name: "Build eBPF"
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install eBPF build dependencies
+      - uses: actions/checkout@v4
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            clang llvm libbpf-dev make gcc
-
-      - name: Obtain vmlinux.h (two-tier fallback)
+          sudo apt-get install -y --no-install-recommends clang llvm libbpf-dev make gcc
+      - name: Obtain vmlinux.h
         run: |
-          if [ -f ebpf/vmlinux.h ]; then
-            echo "✅ vmlinux.h already exists in repo"
-            wc -l ebpf/vmlinux.h
-            exit 0
-          fi
-
-          GENERATED=false
-
-          # ── Tier 1: 从 libbpf/vmlinux.h 仓库下载预生成的 x86_64 头文件 ──
-          # 这是最可靠的方式，不依赖 runner 的内核版本或 bpftool
-          echo "🌐 Tier 1: Downloading vmlinux.h from libbpf/vmlinux.h (x86_64)..."
-          URLS=(
-            "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86_64/vmlinux.h"
-            "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86/vmlinux.h"
-          )
-          for URL in "${URLS[@]}"; do
-            echo "  Trying: $URL"
-            if curl -fsSL --retry 3 --retry-delay 2 "$URL" -o ebpf/vmlinux.h 2>/dev/null; then
+          if [ -f ebpf/vmlinux.h ]; then exit 0; fi
+          for URL in \
+            "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86_64/vmlinux.h" \
+            "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86/vmlinux.h"; do
+            if curl -fsSL --retry 3 "$URL" -o ebpf/vmlinux.h 2>/dev/null; then
               LINES=$(wc -l < ebpf/vmlinux.h)
-              if [ "$LINES" -gt 1000 ]; then
-                echo "✅ vmlinux.h downloaded ($LINES lines)"
-                GENERATED=true
-                break
-              else
-                echo "  ⚠️ File too small ($LINES lines), trying next URL..."
-                rm -f ebpf/vmlinux.h
-              fi
-            else
-              echo "  ⚠️ Download failed, trying next URL..."
+              if [ "$LINES" -gt 1000 ]; then echo "vmlinux.h OK ($LINES lines)"; exit 0; fi
+              rm -f ebpf/vmlinux.h
             fi
           done
-
-          # ── Tier 2: 安装 linux-tools-generic，直接调用 bpftool 二进制 ──
-          # 绕过 /usr/sbin/bpftool wrapper（它会检查内核版本并报错退出）
-          if [ "$GENERATED" = false ]; then
-            echo ""
-            echo "🔧 Tier 2: Installing linux-tools-generic and using bpftool directly..."
-            sudo apt-get install -y --no-install-recommends linux-tools-generic 2>/dev/null || true
-
-            # 找到真实的 bpftool 二进制（不是 wrapper 脚本）
-            BPFTOOL_BIN=""
-            for candidate in /usr/lib/linux-tools/*/bpftool; do
-              if [ -x "$candidate" ]; then
-                BPFTOOL_BIN="$candidate"
-                echo "  Found bpftool at: $BPFTOOL_BIN"
-                break
-              fi
-            done
-
-            if [ -n "$BPFTOOL_BIN" ] && [ -f /sys/kernel/btf/vmlinux ]; then
-              if "$BPFTOOL_BIN" btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h 2>/dev/null; then
-                LINES=$(wc -l < ebpf/vmlinux.h)
-                if [ "$LINES" -gt 1000 ]; then
-                  echo "✅ vmlinux.h generated via bpftool ($LINES lines)"
-                  GENERATED=true
-                else
-                  echo "  ⚠️ Generated file too small ($LINES lines)"
-                  rm -f ebpf/vmlinux.h
-                fi
-              else
-                echo "  ⚠️ bpftool btf dump failed"
-                rm -f ebpf/vmlinux.h
-              fi
-            else
-              echo "  ⚠️ bpftool binary not found or /sys/kernel/btf/vmlinux missing"
-            fi
-          fi
-
-          # ── 最终检查 ──
-          if [ "$GENERATED" = false ]; then
-            echo ""
-            echo "::error::❌ 无法获取 vmlinux.h — 下载和 bpftool 均失败"
-            echo "请手动将 vmlinux.h 提交到 ebpf/ 目录："
-            echo "  bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h"
-            echo "  git add ebpf/vmlinux.h && git commit && git push"
-            exit 1
-          fi
-
-          echo ""
-          echo "📊 vmlinux.h 验证:"
-          wc -l ebpf/vmlinux.h
-          head -3 ebpf/vmlinux.h
-          echo "..."
-          grep -c "^struct " ebpf/vmlinux.h | xargs -I{} echo "  包含 {} 个 struct 定义"
-          grep -c "^enum " ebpf/vmlinux.h   | xargs -I{} echo "  包含 {} 个 enum 定义"
-          grep -c "^typedef " ebpf/vmlinux.h | xargs -I{} echo "  包含 {} 个 typedef 定义"
-
-      - name: Compile eBPF kernel module
+          echo "::error::Cannot obtain vmlinux.h"; exit 1
+      - name: Compile eBPF
         working-directory: ebpf
         run: |
-          echo "🔨 Compiling netmon_kern.c → netmon_kern.o"
-          clang -O2 -g -target bpf \
-            -D__TARGET_ARCH_x86 \
-            -I. \
-            -I/usr/include/$(uname -m)-linux-gnu \
-            -c netmon_kern.c \
-            -o netmon_kern.o
-          echo ""
-          echo "✅ eBPF object compiled successfully"
-          file netmon_kern.o
+          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -I. -I/usr/include/$(uname -m)-linux-gnu -c netmon_kern.c -o netmon_kern.o
           ls -lh netmon_kern.o
-
-      - name: Upload eBPF object
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ebpf-object
           path: ebpf/netmon_kern.o
           retention-days: 14
 
-  # ============================================================
-  # Job 3: Python Server 检查
-  # ============================================================
   check-server:
-    name: 🐍 Check Server
+    name: "Check Server"
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flask
-          pip install flake8 pyflakes
-
-      - name: Validate Python syntax
+      - name: Lint and test
         working-directory: server
         run: |
-          echo "🔍 Checking Python syntax..."
-          python -m py_compile app.py
-          echo "✅ app.py syntax OK"
+          pip install flask flake8
+          python -m py_compile app.py && echo "Syntax OK"
+          flake8 . --count --max-line-length=120 --show-source --statistics
+          python -c "from app import app; assert app; print('Flask app OK')"
 
-      - name: Lint with flake8
-        continue-on-error: true
-        working-directory: server
-        run: |
-          echo "🧹 Running flake8..."
-          flake8 . --count --max-line-length=120 \
-                   --ignore=E501,W503 \
-                   --show-source --statistics
-
-      - name: Basic import test
-        working-directory: server
-        run: |
-          echo "🧪 Testing Flask app import..."
-          python -c "
-          import sys
-          sys.path.insert(0, '.')
-          from app import app
-          assert app is not None
-          print('✅ Flask app imported successfully')
-          print(f'   Routes: {[rule.rule for rule in app.url_map.iter_rules()]}')
-          "
-
-  # ============================================================
-  # Job 4: 打包发布（全部检查通过后执行）
-  # ============================================================
   package:
-    name: 📦 Package Release
+    name: "Package Release"
     runs-on: ubuntu-latest
-    needs: [check-kotlin, build-ebpf, check-server]
+    needs: [build-android, build-ebpf, check-server]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download eBPF build artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: ebpf-object
-          path: release/ebpf/
-
-      - name: Assemble release package
+          path: artifacts/
+      - name: Create release
         run: |
-          mkdir -p release/android release/server release/scripts
-          cp -r android/* release/android/
-          cp -r server/*  release/server/
-          cp -r scripts/* release/scripts/
-
-          cat > release/BUILD_INFO.txt << EOF
-          NetMonitor Pro Full — Build Info
-          =================================
-          Build Time : $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          Commit SHA : ${{ github.sha }}
-          Branch     : ${{ github.ref_name }}
-          Runner OS  : ${{ runner.os }}
-          Triggered  : ${{ github.event_name }}
-
-          Included:
-            - android/   Kotlin source (syntax-checked)
-            - ebpf/      Compiled eBPF object (.o)
-            - server/    Python Flask server (lint-passed)
-            - scripts/   Build scripts
-          EOF
-
-          find release/ -type f | sort >> release/BUILD_INFO.txt
-          cat release/BUILD_INFO.txt
-
-      - name: Create release archive
-        run: |
-          cd release
-          zip -r ../NetMonitor-Pro-Full-${{ github.run_number }}.zip .
-          cd ..
-          ls -lh NetMonitor-Pro-Full-*.zip
-
-      - name: Upload release package
-        uses: actions/upload-artifact@v4
+          mkdir -p release
+          cp -r artifacts/NetMonitor-Pro-debug/* release/ 2>/dev/null || true
+          cp -r artifacts/NetMonitor-Pro-release/* release/ 2>/dev/null || true
+          cp -r artifacts/ebpf-object/* release/ 2>/dev/null || true
+          cp -r server/ release/server/
+          cp -r scripts/ release/scripts/
+          cd release && zip -r ../NetMonitor-Pro-Full.zip .
+      - uses: actions/upload-artifact@v4
         with:
           name: NetMonitor-Pro-Full-build${{ github.run_number }}
-          path: NetMonitor-Pro-Full-*.zip
+          path: NetMonitor-Pro-Full.zip
           retention-days: 30
