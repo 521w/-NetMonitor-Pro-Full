@@ -75,73 +75,94 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang llvm libbpf-dev make gcc
 
-      - name: Generate vmlinux.h (three-tier fallback)
+      - name: Obtain vmlinux.h (two-tier fallback)
         run: |
           if [ -f ebpf/vmlinux.h ]; then
-            echo "✅ vmlinux.h already exists in repo, skipping generation"
+            echo "✅ vmlinux.h already exists in repo"
+            wc -l ebpf/vmlinux.h
             exit 0
           fi
 
           GENERATED=false
 
-          # ── Tier 1: bpftool（先检查命令是否存在，再尝试执行）──
-          if command -v bpftool &>/dev/null && [ -f /sys/kernel/btf/vmlinux ]; then
-            echo "🔧 Tier 1: Generating vmlinux.h via bpftool..."
-            if bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h 2>/dev/null; then
-              echo "✅ vmlinux.h generated via bpftool ($(wc -l < ebpf/vmlinux.h) lines)"
-              GENERATED=true
+          # ── Tier 1: 从 libbpf/vmlinux.h 仓库下载预生成的 x86_64 头文件 ──
+          # 这是最可靠的方式，不依赖 runner 的内核版本或 bpftool
+          echo "🌐 Tier 1: Downloading vmlinux.h from libbpf/vmlinux.h (x86_64)..."
+          URLS=(
+            "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86_64/vmlinux.h"
+            "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86/vmlinux.h"
+          )
+          for URL in "${URLS[@]}"; do
+            echo "  Trying: $URL"
+            if curl -fsSL --retry 3 --retry-delay 2 "$URL" -o ebpf/vmlinux.h 2>/dev/null; then
+              LINES=$(wc -l < ebpf/vmlinux.h)
+              if [ "$LINES" -gt 1000 ]; then
+                echo "✅ vmlinux.h downloaded ($LINES lines)"
+                GENERATED=true
+                break
+              else
+                echo "  ⚠️ File too small ($LINES lines), trying next URL..."
+                rm -f ebpf/vmlinux.h
+              fi
             else
-              echo "⚠️ bpftool failed, trying next tier..."
-              rm -f ebpf/vmlinux.h
+              echo "  ⚠️ Download failed, trying next URL..."
             fi
-          else
-            echo "⚠️ bpftool or BTF not available, skipping Tier 1"
+          done
+
+          # ── Tier 2: 安装 linux-tools-generic，直接调用 bpftool 二进制 ──
+          # 绕过 /usr/sbin/bpftool wrapper（它会检查内核版本并报错退出）
+          if [ "$GENERATED" = false ]; then
+            echo ""
+            echo "🔧 Tier 2: Installing linux-tools-generic and using bpftool directly..."
+            sudo apt-get install -y --no-install-recommends linux-tools-generic 2>/dev/null || true
+
+            # 找到真实的 bpftool 二进制（不是 wrapper 脚本）
+            BPFTOOL_BIN=""
+            for candidate in /usr/lib/linux-tools/*/bpftool; do
+              if [ -x "$candidate" ]; then
+                BPFTOOL_BIN="$candidate"
+                echo "  Found bpftool at: $BPFTOOL_BIN"
+                break
+              fi
+            done
+
+            if [ -n "$BPFTOOL_BIN" ] && [ -f /sys/kernel/btf/vmlinux ]; then
+              if "$BPFTOOL_BIN" btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h 2>/dev/null; then
+                LINES=$(wc -l < ebpf/vmlinux.h)
+                if [ "$LINES" -gt 1000 ]; then
+                  echo "✅ vmlinux.h generated via bpftool ($LINES lines)"
+                  GENERATED=true
+                else
+                  echo "  ⚠️ Generated file too small ($LINES lines)"
+                  rm -f ebpf/vmlinux.h
+                fi
+              else
+                echo "  ⚠️ bpftool btf dump failed"
+                rm -f ebpf/vmlinux.h
+              fi
+            else
+              echo "  ⚠️ bpftool binary not found or /sys/kernel/btf/vmlinux missing"
+            fi
           fi
 
-          # ── Tier 2: 从 libbpf/vmlinux.h 仓库下载预生成的头文件 ──
+          # ── 最终检查 ──
           if [ "$GENERATED" = false ]; then
-            echo "🌐 Tier 2: Downloading vmlinux.h from libbpf/vmlinux.h repo..."
-            VMLINUX_URL="https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/vmlinux/vmlinux.h"
-            if curl -fsSL "$VMLINUX_URL" -o ebpf/vmlinux.h 2>/dev/null; then
-              echo "✅ vmlinux.h downloaded ($(wc -l < ebpf/vmlinux.h) lines)"
-              GENERATED=true
-            else
-              echo "⚠️ Download failed, trying next tier..."
-              rm -f ebpf/vmlinux.h
-            fi
-          fi
-
-          # ── Tier 3: 精准 stub（覆盖 netmon_kern.c 实际用到的类型）──
-          if [ "$GENERATED" = false ]; then
-            echo "📝 Tier 3: Creating minimal vmlinux.h stub..."
-            cat > ebpf/vmlinux.h << 'STUB'
-          #ifndef __VMLINUX_H__
-          #define __VMLINUX_H__
-
-          /* Minimal vmlinux.h stub for CI — covers types used by netmon_kern.c */
-          typedef unsigned char       u8;
-          typedef unsigned short      u16;
-          typedef unsigned int        u32;
-          typedef unsigned long long  u64;
-          typedef int                 s32;
-          typedef long long           s64;
-
-          typedef u32 __u32;
-          typedef u64 __u64;
-
-          struct pt_regs {
-              long regs[31];
-          };
-
-          #endif /* __VMLINUX_H__ */
-          STUB
-            echo "✅ Minimal vmlinux.h stub created"
+            echo ""
+            echo "::error::❌ 无法获取 vmlinux.h — 下载和 bpftool 均失败"
+            echo "请手动将 vmlinux.h 提交到 ebpf/ 目录："
+            echo "  bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h"
+            echo "  git add ebpf/vmlinux.h && git commit && git push"
+            exit 1
           fi
 
           echo ""
-          echo "📊 vmlinux.h stats:"
+          echo "📊 vmlinux.h 验证:"
           wc -l ebpf/vmlinux.h
-          head -5 ebpf/vmlinux.h
+          head -3 ebpf/vmlinux.h
+          echo "..."
+          grep -c "^struct " ebpf/vmlinux.h | xargs -I{} echo "  包含 {} 个 struct 定义"
+          grep -c "^enum " ebpf/vmlinux.h   | xargs -I{} echo "  包含 {} 个 enum 定义"
+          grep -c "^typedef " ebpf/vmlinux.h | xargs -I{} echo "  包含 {} 个 typedef 定义"
 
       - name: Compile eBPF kernel module
         working-directory: ebpf
