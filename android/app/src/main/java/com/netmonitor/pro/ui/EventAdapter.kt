@@ -28,17 +28,18 @@ class EventAdapter : RecyclerView.Adapter<EventAdapter.VH>() {
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val e = events[position]
-        holder.dest.text = "${'$'}{e.destIp}:${'$'}{e.port}"
-        holder.details.text = "${'$'}{e.protocol} ${'$'}{e.direction} via ${'$'}{e.appName}"
+        holder.dest.text = "${e.destIp}:${e.port}"
+        holder.details.text = "${e.protocol} ${e.direction} via ${e.appName}"
         val bytes = e.bytesTransferred
         holder.bytes.text = when {
-            bytes > 1_000_000 -> "${'$'}{bytes / 1_000_000} MB"
-            bytes > 1_000 -> "${'$'}{bytes / 1_000} KB"
-            else -> "${'$'}bytes B"
+            bytes > 1000000 -> "${bytes / 1000000} MB"
+            bytes > 1000 -> "${bytes / 1000} KB"
+            else -> "$bytes B"
         }
         holder.time.text = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(e.timestamp))
         val dot = GradientDrawable()
         dot.shape = GradientDrawable.OVAL
+        dot.setSize(24, 24)
         dot.setColor(when {
             e.riskLevel > 60 -> Color.parseColor("#F44336")
             e.riskLevel > 30 -> Color.parseColor("#FF9800")
