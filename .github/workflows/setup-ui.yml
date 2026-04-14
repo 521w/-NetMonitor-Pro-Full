@@ -1,4 +1,4 @@
-ame: Setup Android UI
+name: Setup Android UI
 
 on:
   workflow_dispatch:
