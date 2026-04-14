@@ -1,15 +1,8 @@
 package com.netmonitor.pro.core
 
 object EventBus {
-    private val q = mutableListOf<NetEvent>()
-
-    @Synchronized
-    fun push(e: NetEvent){ q.add(e) }
-
-    @Synchronized
-    fun drain(): List<NetEvent>{
-        val c = q.toList()
-        q.clear()
-        return c
-    }
+    private val listeners = mutableListOf<(NetEvent) -> Unit>()
+    fun subscribe(listener: (NetEvent) -> Unit) { listeners.add(listener) }
+    fun publish(event: NetEvent) { listeners.toList().forEach { it(event) } }
+    fun clear() { listeners.clear() }
 }
