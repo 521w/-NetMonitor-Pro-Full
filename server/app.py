@@ -6,7 +6,7 @@ db = []
 
 @app.route('/ingest', methods=['POST'])
 def ingest():
-    db.append(request.get_json(force=True))
+    db.append(request.json)
     return {"ok": True}
 
 
