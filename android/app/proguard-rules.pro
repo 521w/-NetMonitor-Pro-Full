@@ -1,2 +1,4 @@
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+-keep class com.netmonitor.pro.xposed.** { *; }
+-keep class de.robv.android.xposed.** { *; }

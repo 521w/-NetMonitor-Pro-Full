@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory android:title="监控设置">
+        <ListPreference android:key="poll_interval" android:title="轮询间隔"
+            android:summary="每隔多久检查一次网络流量"
+            android:entries="@array/interval_labels" android:entryValues="@array/interval_values"
+            android:defaultValue="3000"/>
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="风险阈值">
+        <EditTextPreference android:key="threshold_volume" android:title="大流量阈值 (bytes)"
+            android:summary="超过此值触发高流量告警"
+            android:defaultValue="10000000"/>
+        <EditTextPreference android:key="threshold_dest" android:title="目标数阈值"
+            android:summary="唯一目标地址超过此值触发告警"
+            android:defaultValue="20"/>
+        <EditTextPreference android:key="threshold_leak" android:title="泄漏检测阈值 (bytes)"
+            android:summary="单一目标流量超过此值触发告警"
+            android:defaultValue="5000000"/>
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="关于">
+        <Preference android:key="about_version" android:title="版本" android:summary="1.0.0"/>
+        <Preference android:key="about_xposed" android:title="Xposed 状态" android:summary="检测中..."/>
+    </PreferenceCategory>
+</PreferenceScreen>
