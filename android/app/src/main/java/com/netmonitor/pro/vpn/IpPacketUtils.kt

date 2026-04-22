@@ -1,0 +1,269 @@
+package com.netmonitor.pro.vpn
+
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+/**
+ * NetMonitor Pro — IP/TCP/UDP 包构造工具
+ *
+ * 将真实网络的响应数据重新封装成 IP 包写回 TUN 接口，
+ * 让应用层以为数据是正常从网络返回的。
+ *
+ * 核心功能：
+ * - 构造 IPv4 + TCP/UDP 响应包
+ * - 正确计算 IP/TCP/UDP 校验和
+ * - SYN-ACK / FIN-ACK / RST 包生成
+ */
+object IpPacketUtils {
+
+    const val PROTO_TCP: Byte = 6
+    const val PROTO_UDP: Byte = 17
+
+    const val TCP_FIN = 0x01
+    const val TCP_SYN = 0x02
+    const val TCP_RST = 0x04
+    const val TCP_PSH = 0x08
+    const val TCP_ACK = 0x10
+
+    /**
+     * 构造 IPv4 + UDP 响应包
+     */
+    fun buildUdpResponsePacket(
+        srcAddr: ByteArray,
+        dstAddr: ByteArray,
+        srcPort: Int,
+        dstPort: Int,
+        payload: ByteArray
+    ): ByteArray {
+        val udpLen = 8 + payload.size
+        val totalLen = 20 + udpLen
+
+        val buf = ByteBuffer.allocate(totalLen).order(ByteOrder.BIG_ENDIAN)
+
+        // IPv4 头（20 字节）
+        buf.put((0x45).toByte())
+        buf.put(0)
+        buf.putShort(totalLen.toShort())
+        buf.putShort(0)
+        buf.putShort(0x4000.toShort())
+        buf.put(64)
+        buf.put(PROTO_UDP)
+        buf.putShort(0)
+        buf.put(srcAddr)
+        buf.put(dstAddr)
+
+        val ipChecksum = calculateChecksum(buf.array(), 0, 20)
+        buf.putShort(10, ipChecksum.toShort())
+
+        // UDP 头（8 字节）
+        val udpStart = 20
+        buf.position(udpStart)
+        buf.putShort(srcPort.toShort())
+        buf.putShort(dstPort.toShort())
+        buf.putShort(udpLen.toShort())
+        buf.putShort(0)
+
+        // 负载
+        buf.put(payload)
+
+        // UDP 校验和
+        val udpChecksum = calculateUdpChecksum(
+            buf.array(), srcAddr, dstAddr, udpStart, udpLen
+        )
+        buf.putShort(udpStart + 6, udpChecksum.toShort())
+
+        return buf.array()
+    }
+
+    /**
+     * 构造 IPv4 + TCP 数据响应包
+     */
+    fun buildTcpPacket(
+        srcAddr: ByteArray,
+        dstAddr: ByteArray,
+        srcPort: Int,
+        dstPort: Int,
+        seqNum: Long,
+        ackNum: Long,
+        flags: Int,
+        payload: ByteArray = ByteArray(0),
+        windowSize: Int = 65535
+    ): ByteArray {
+        val tcpHeaderLen = 20
+        val tcpLen = tcpHeaderLen + payload.size
+        val totalLen = 20 + tcpLen
+
+        val buf = ByteBuffer.allocate(totalLen).order(ByteOrder.BIG_ENDIAN)
+
+        // IPv4 头
+        buf.put((0x45).toByte())
+        buf.put(0)
+        buf.putShort(totalLen.toShort())
+        buf.putShort(0)
+        buf.putShort(0x4000.toShort())
+        buf.put(64)
+        buf.put(PROTO_TCP)
+        buf.putShort(0)
+        buf.put(srcAddr)
+        buf.put(dstAddr)
+
+        val ipChecksum = calculateChecksum(buf.array(), 0, 20)
+        buf.putShort(10, ipChecksum.toShort())
+
+        // TCP 头（20 字节）
+        val tcpStart = 20
+        buf.position(tcpStart)
+        buf.putShort(srcPort.toShort())
+        buf.putShort(dstPort.toShort())
+        buf.putInt(seqNum.toInt())
+        buf.putInt(ackNum.toInt())
+        buf.putShort(((tcpHeaderLen / 4 shl 12) or flags).toShort())
+        buf.putShort(windowSize.toShort())
+        buf.putShort(0)
+        buf.putShort(0)
+
+        if (payload.isNotEmpty()) {
+            buf.put(payload)
+        }
+
+        // TCP 校验和
+        val tcpChecksum = calculateTcpChecksum(
+            buf.array(), srcAddr, dstAddr, tcpStart, tcpLen
+        )
+        buf.putShort(tcpStart + 16, tcpChecksum.toShort())
+
+        return buf.array()
+    }
+
+    /**
+     * 构造 SYN-ACK 响应（三次握手第二步）
+     */
+    fun buildSynAck(
+        srcAddr: ByteArray, dstAddr: ByteArray,
+        srcPort: Int, dstPort: Int,
+        seqNum: Long, ackNum: Long
+    ): ByteArray = buildTcpPacket(
+        srcAddr, dstAddr, srcPort, dstPort,
+        seqNum, ackNum, TCP_SYN or TCP_ACK
+    )
+
+    /**
+     * 构造 RST 包（拒绝连接）
+     */
+    fun buildRst(
+        srcAddr: ByteArray, dstAddr: ByteArray,
+        srcPort: Int, dstPort: Int,
+        seqNum: Long, ackNum: Long
+    ): ByteArray = buildTcpPacket(
+        srcAddr, dstAddr, srcPort, dstPort,
+        seqNum, ackNum, TCP_RST or TCP_ACK
+    )
+
+    // ═══════════════════════════════════════════════════════
+    //  校验和计算
+    // ═══════════════════════════════════════════════════════
+
+    /**
+     * RFC 1071 — Internet Checksum
+     */
+    fun calculateChecksum(data: ByteArray, offset: Int, length: Int): Int {
+        var sum = 0L
+        var i = offset
+        val end = offset + length
+
+        while (i < end - 1) {
+            sum += ((data[i].toInt() and 0xFF) shl 8) or (data[i + 1].toInt() and 0xFF)
+            i += 2
+        }
+        if (i < end) {
+            sum += (data[i].toInt() and 0xFF) shl 8
+        }
+
+        while (sum shr 16 != 0L) {
+            sum = (sum and 0xFFFF) + (sum shr 16)
+        }
+
+        return (sum.toInt() xor 0xFFFF) and 0xFFFF
+    }
+
+    /**
+     * UDP 校验和（含 IPv4 伪头部）
+     */
+    private fun calculateUdpChecksum(
+        packet: ByteArray,
+        srcAddr: ByteArray, dstAddr: ByteArray,
+        udpOffset: Int, udpLength: Int
+    ): Int {
+        val pseudo = ByteArray(12 + udpLength)
+        System.arraycopy(srcAddr, 0, pseudo, 0, 4)
+        System.arraycopy(dstAddr, 0, pseudo, 4, 4)
+        pseudo[8] = 0
+        pseudo[9] = PROTO_UDP
+        pseudo[10] = (udpLength shr 8).toByte()
+        pseudo[11] = (udpLength and 0xFF).toByte()
+
+        System.arraycopy(packet, udpOffset, pseudo, 12, udpLength)
+        pseudo[12 + 6] = 0
+        pseudo[12 + 7] = 0
+
+        val result = calculateChecksum(pseudo, 0, pseudo.size)
+        return if (result == 0) 0xFFFF else result
+    }
+
+    /**
+     * TCP 校验和（含 IPv4 伪头部）
+     */
+    private fun calculateTcpChecksum(
+        packet: ByteArray,
+        srcAddr: ByteArray, dstAddr: ByteArray,
+        tcpOffset: Int, tcpLength: Int
+    ): Int {
+        val pseudo = ByteArray(12 + tcpLength)
+        System.arraycopy(srcAddr, 0, pseudo, 0, 4)
+        System.arraycopy(dstAddr, 0, pseudo, 4, 4)
+        pseudo[8] = 0
+        pseudo[9] = PROTO_TCP
+        pseudo[10] = (tcpLength shr 8).toByte()
+        pseudo[11] = (tcpLength and 0xFF).toByte()
+
+        System.arraycopy(packet, tcpOffset, pseudo, 12, tcpLength)
+        pseudo[12 + 16] = 0
+        pseudo[12 + 17] = 0
+
+        return calculateChecksum(pseudo, 0, pseudo.size)
+    }
+
+    // ═══════════════════════════════════════════════════════
+    //  IP 包解析辅助
+    // ═══════════════════════════════════════════════════════
+
+    fun extractSrcAddr(packet: ByteArray): ByteArray = packet.copyOfRange(12, 16)
+    fun extractDstAddr(packet: ByteArray): ByteArray = packet.copyOfRange(16, 20)
+    fun extractProtocol(packet: ByteArray): Int = packet[9].toInt() and 0xFF
+    fun extractIHL(packet: ByteArray): Int = (packet[0].toInt() and 0x0F) * 4
+
+    fun extractSrcPort(packet: ByteArray, ihl: Int): Int =
+        ((packet[ihl].toInt() and 0xFF) shl 8) or (packet[ihl + 1].toInt() and 0xFF)
+
+    fun extractDstPort(packet: ByteArray, ihl: Int): Int =
+        ((packet[ihl + 2].toInt() and 0xFF) shl 8) or (packet[ihl + 3].toInt() and 0xFF)
+
+    fun extractTcpFlags(packet: ByteArray, ihl: Int): Int =
+        ((packet[ihl + 12].toInt() and 0xFF) shl 8 or (packet[ihl + 13].toInt() and 0xFF)) and 0x3F
+
+    fun extractTcpSeqNum(packet: ByteArray, ihl: Int): Long {
+        val buf = ByteBuffer.wrap(packet, ihl + 4, 4).order(ByteOrder.BIG_ENDIAN)
+        return buf.int.toLong() and 0xFFFFFFFFL
+    }
+
+    fun extractTcpAckNum(packet: ByteArray, ihl: Int): Long {
+        val buf = ByteBuffer.wrap(packet, ihl + 8, 4).order(ByteOrder.BIG_ENDIAN)
+        return buf.int.toLong() and 0xFFFFFFFFL
+    }
+
+    fun extractTcpDataOffset(packet: ByteArray, ihl: Int): Int =
+        ((packet[ihl + 12].toInt() and 0xF0) shr 4) * 4
+
+    fun extractTotalLength(packet: ByteArray): Int =
+        ((packet[2].toInt() and 0xFF) shl 8) or (packet[3].toInt() and 0xFF)
+}
