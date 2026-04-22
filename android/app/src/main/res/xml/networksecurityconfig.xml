@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  NetMonitor Pro 网络安全配置
+  允许抓包时信任用户安装的 CA 证书（用于 HTTPS 解密分析）
+  仅在 debug 构建中启用
+-->
+<network-security-config>
+    <!-- 生产环境：仅信任系统 CA -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Debug 环境：额外信任用户 CA（便于开发测试） -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>
