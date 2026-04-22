@@ -1,0 +1,781 @@
+package com.netmonitor.pro.vpn
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import android.net.VpnService
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.netmonitor.pro.model.NetworkEvent
+import com.netmonitor.pro.model.EventType
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.IOException
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * NetMonitor Pro — VPN 抓包服务（免 Root）
+ *
+ * [FIX-#1] 完整实现了包转发逻辑：
+ *   - TCP: 拦截 SYN -> 创建真实 Socket -> 模拟三次握手 -> 双向代理数据 -> 处理 FIN/RST
+ *   - UDP: 创建 DatagramSocket -> 转发数据 -> 接收响应 -> 写回 TUN
+ *   - 所有包解析和转发操作在独立线程池中执行
+ */
+class VpnCaptureService : VpnService() {
+
+    companion object {
+        private const val TAG = "NetMonVPN"
+        private const val CHANNEL_ID = "netmon_vpn_channel"
+        private const val NOTIFICATION_ID = 1001
+
+        private const val VPN_ADDRESS = "10.120.0.1"
+        private const val VPN_ROUTE = "0.0.0.0"
+        private const val VPN_DNS = "8.8.8.8"
+        private const val VPN_MTU = 1500
+
+        const val ACTION_START = "com.netmonitor.pro.vpn.START"
+        const val ACTION_STOP = "com.netmonitor.pro.vpn.STOP"
+
+        private const val TCP_STATE_SYN_RECEIVED = 1
+        private const val TCP_STATE_ESTABLISHED = 2
+        private const val TCP_STATE_FIN_WAIT = 3
+        private const val TCP_STATE_CLOSED = 4
+
+        private const val TCP_CONNECT_TIMEOUT = 10_000
+        private const val TCP_IDLE_TIMEOUT = 300_000L
+        private const val UDP_SESSION_TIMEOUT = 60_000L
+
+        @Volatile
+        var instance: VpnCaptureService? = null
+            private set
+
+        fun isRunning(): Boolean = instance?.isCapturing?.get() == true
+    }
+
+    // --- 状态 ---
+    private val isCapturing = AtomicBoolean(false)
+    private var vpnInterface: ParcelFileDescriptor? = null
+    private var tunInput: FileInputStream? = null
+    private var tunOutput: FileOutputStream? = null
+    private var captureThread: Thread? = null
+
+    // [FIX-#1] 线程池用于真实网络 I/O
+    private var networkPool: ExecutorService? = null
+
+    // --- 统计 ---
+    val packetCount = AtomicLong(0)
+    val byteCount = AtomicLong(0)
+    val tcpCount = AtomicLong(0)
+    val udpCount = AtomicLong(0)
+    val dnsCount = AtomicLong(0)
+
+    // --- 事件队列 ---
+    val eventQueue: ConcurrentLinkedQueue<NetworkEvent> = ConcurrentLinkedQueue()
+    private val queueCount = AtomicInteger(0)   // [FIX-#10] 替代 O(n) 的 .size
+    private val maxQueueSize = 10000
+
+    // --- 过滤配置 ---
+    private var filterUids: Set<Int> = emptySet()
+    private var captureUdp: Boolean = true
+
+    // --- 事件回调 ---
+    var onEventCaptured: ((NetworkEvent) -> Unit)? = null
+
+    // ======================================================
+    // [FIX-#1] TCP 会话管理
+    // ======================================================
+
+    private inner class TcpSession(
+        val key: String,
+        val srcAddr: ByteArray,
+        val dstAddr: ByteArray,
+        val srcPort: Int,
+        val dstPort: Int,
+    ) {
+        var state = TCP_STATE_SYN_RECEIVED
+        var tunSeqNum: Long = (Math.random() * Int.MAX_VALUE).toLong()
+        var tunAckNum: Long = 0
+        var realSocket: Socket? = null
+        var lastActivity = System.currentTimeMillis()
+
+        fun isExpired(): Boolean =
+            System.currentTimeMillis() - lastActivity > TCP_IDLE_TIMEOUT
+
+        fun close() {
+            state = TCP_STATE_CLOSED
+            try { realSocket?.close() } catch (_: Exception) {}
+            realSocket = null
+        }
+    }
+
+    private inner class UdpSession(
+        val key: String,
+        val srcAddr: ByteArray,
+        val dstAddr: ByteArray,
+        val srcPort: Int,
+        val dstPort: Int,
+    ) {
+        var socket: DatagramSocket? = null
+        var lastActivity = System.currentTimeMillis()
+
+        fun isExpired(): Boolean =
+            System.currentTimeMillis() - lastActivity > UDP_SESSION_TIMEOUT
+
+        fun close() {
+            try { socket?.close() } catch (_: Exception) {}
+            socket = null
+        }
+    }
+
+    private val tcpSessions = ConcurrentHashMap<String, TcpSession>()
+    private val udpSessions = ConcurrentHashMap<String, UdpSession>()
+    private val tunWriteLock = Object()
+
+    // ======================================================
+    //  生命周期
+    // ======================================================
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        createNotificationChannel()
+        Log.i(TAG, "VPN 服务已创建")
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopCapture()
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_START, null -> {
+                intent?.let {
+                    filterUids = it.getIntArrayExtra("filter_uids")?.toSet() ?: emptySet()
+                    captureUdp = it.getBooleanExtra("capture_udp", true)
+                }
+                startCapture()
+            }
+        }
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        stopCapture()
+        instance = null
+        Log.i(TAG, "VPN 服务已销毁")
+        super.onDestroy()
+    }
+
+    // ======================================================
+    //  VPN 接口建立
+    // ======================================================
+
+    private fun startCapture() {
+        if (isCapturing.get()) {
+            Log.w(TAG, "已在捕获中，忽略重复启动")
+            return
+        }
+
+        try {
+            val builder = Builder()
+                .setSession("NetMonitor Pro")
+                .setMtu(VPN_MTU)
+                .addAddress(VPN_ADDRESS, 32)
+                .addRoute(VPN_ROUTE, 0)
+                .addDnsServer(VPN_DNS)
+
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (e: Exception) {
+                Log.w(TAG, "无法排除自身应用: ${e.message}")
+            }
+
+            vpnInterface = builder.establish()
+            if (vpnInterface == null) {
+                Log.e(TAG, "VPN 接口建立失败")
+                stopSelf()
+                return
+            }
+
+            val fd = vpnInterface!!.fileDescriptor
+            tunInput = FileInputStream(fd)
+            tunOutput = FileOutputStream(fd)
+
+            isCapturing.set(true)
+
+            // [FIX-#1] 创建线程池
+            networkPool = Executors.newCachedThreadPool { r ->
+                Thread(r).apply {
+                    isDaemon = true
+                    name = "NetMon-Net-${id}"
+                }
+            }
+
+            startForeground(NOTIFICATION_ID, buildNotification("正在监控网络流量..."))
+            captureThread = Thread(TunReaderRunnable(), "NetMon-TunReader").apply { start() }
+            networkPool?.submit(SessionCleanerRunnable())
+
+            Log.i(TAG, "VPN 捕获已启动 | UDP=$captureUdp | 过滤UID=$filterUids")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "启动 VPN 捕获失败", e)
+            stopCapture()
+        }
+    }
+
+    private fun stopCapture() {
+        if (!isCapturing.compareAndSet(true, false)) return
+
+        captureThread?.interrupt()
+
+        tcpSessions.values.forEach { it.close() }
+        tcpSessions.clear()
+        udpSessions.values.forEach { it.close() }
+        udpSessions.clear()
+
+        networkPool?.shutdownNow()
+        networkPool = null
+
+        try { tunInput?.close() } catch (_: Exception) {}
+        try { tunOutput?.close() } catch (_: Exception) {}
+        try { vpnInterface?.close() } catch (_: Exception) {}
+        vpnInterface = null
+        tunInput = null
+        tunOutput = null
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+
+        Log.i(TAG, "VPN 捕获已停止 | 总包数=${packetCount.get()} | 总字节=${byteCount.get()}")
+    }
+
+    // ======================================================
+    // [FIX-#1] TUN 读取主线程
+    // ======================================================
+
+    private inner class TunReaderRunnable : Runnable {
+        override fun run() {
+            val input = tunInput ?: return
+            val buffer = ByteArray(VPN_MTU)
+
+            Log.d(TAG, "TUN 读取线程启动")
+
+            while (isCapturing.get() && !Thread.interrupted()) {
+                try {
+                    val length = input.read(buffer)
+                    if (length <= 0 || length < 20) continue
+
+                    packetCount.incrementAndGet()
+                    byteCount.addAndGet(length.toLong())
+
+                    val version = (buffer[0].toInt() shr 4) and 0x0F
+                    if (version != 4) continue   // 目前只处理 IPv4
+
+                    val protocol = buffer[9].toInt() and 0xFF
+                    val ihl = (buffer[0].toInt() and 0x0F) * 4
+
+                    val packet = buffer.copyOf(length)
+
+                    when (protocol) {
+                        6 -> {   // TCP
+                            tcpCount.incrementAndGet()
+                            handleTcpPacket(packet, ihl, length)
+                        }
+                        17 -> {  // UDP
+                            if (!captureUdp) continue
+                            udpCount.incrementAndGet()
+                            handleUdpPacket(packet, ihl, length)
+                        }
+                    }
+
+                } catch (e: InterruptedException) {
+                    break
+                } catch (e: IOException) {
+                    if (isCapturing.get()) {
+                        Log.e(TAG, "TUN 读取异常: ${e.message}")
+                    }
+                    break
+                } catch (e: Exception) {
+                    if (isCapturing.get()) {
+                        Log.w(TAG, "包处理异常: ${e.message}")
+                    }
+                }
+            }
+
+            Log.d(TAG, "TUN 读取线程结束")
+        }
+    }
+
+    // ======================================================
+    // [FIX-#1] TCP 包处理 — 完整三次握手 + 双向代理
+    // ======================================================
+
+    private fun handleTcpPacket(packet: ByteArray, ihl: Int, length: Int) {
+        if (length < ihl + 20) return
+
+        val srcAddr = IpPacketUtils.extractSrcAddr(packet)
+        val dstAddr = IpPacketUtils.extractDstAddr(packet)
+        val srcPort = IpPacketUtils.extractSrcPort(packet, ihl)
+        val dstPort = IpPacketUtils.extractDstPort(packet, ihl)
+        val flags   = IpPacketUtils.extractTcpFlags(packet, ihl)
+        val seqNum  = IpPacketUtils.extractTcpSeqNum(packet, ihl)
+        val ackNum  = IpPacketUtils.extractTcpAckNum(packet, ihl)
+
+        val key = "${addrToString(srcAddr)}:$srcPort-${addrToString(dstAddr)}:$dstPort"
+        val isSyn = (flags and IpPacketUtils.TCP_SYN) != 0 && (flags and IpPacketUtils.TCP_ACK) == 0
+        val isFin = (flags and IpPacketUtils.TCP_FIN) != 0
+        val isRst = (flags and IpPacketUtils.TCP_RST) != 0
+        val isAck = (flags and IpPacketUtils.TCP_ACK) != 0
+
+        // ── SYN: 新连接 ──
+        if (isSyn) {
+            emitEvent(EventType.TCP_CONNECT, 4, "TCP", srcAddr, srcPort, dstAddr, dstPort, 0)
+
+            val session = TcpSession(key, srcAddr, dstAddr, srcPort, dstPort)
+            session.tunAckNum = seqNum + 1
+            tcpSessions[key] = session
+
+            networkPool?.submit {
+                try {
+                    val realSock = Socket()
+                    protect(realSock)   // 关键：绕过 VPN 回环
+                    realSock.connect(
+                        InetSocketAddress(InetAddress.getByAddress(dstAddr), dstPort),
+                        TCP_CONNECT_TIMEOUT
+                    )
+                    session.realSocket = realSock
+                    session.state = TCP_STATE_ESTABLISHED
+
+                    // 回复 SYN-ACK 给应用
+                    val synAck = IpPacketUtils.buildSynAck(
+                        dstAddr, srcAddr, dstPort, srcPort,
+                        session.tunSeqNum, session.tunAckNum
+                    )
+                    session.tunSeqNum++
+                    writeTun(synAck)
+
+                    // 启动 服务端→TUN 的数据转发
+                    networkPool?.submit { relayRealToTun(session) }
+
+                } catch (e: Exception) {
+                    Log.d(TAG, "TCP 连接失败 $key: ${e.message}")
+                    val rst = IpPacketUtils.buildRst(
+                        dstAddr, srcAddr, dstPort, srcPort,
+                        0, session.tunAckNum
+                    )
+                    writeTun(rst)
+                    session.close()
+                    tcpSessions.remove(key)
+                }
+            }
+            return
+        }
+
+        // ── 已有会话 ──
+        val session = tcpSessions[key] ?: return
+        session.lastActivity = System.currentTimeMillis()
+
+        // RST: 立即关闭
+        if (isRst) {
+            session.close()
+            tcpSessions.remove(key)
+            emitEvent(EventType.TCP_CLOSE, 4, "TCP", srcAddr, srcPort, dstAddr, dstPort, 0)
+            return
+        }
+
+        // FIN: 优雅关闭
+        if (isFin) {
+            session.tunAckNum = seqNum + 1
+
+            val finAck = IpPacketUtils.buildTcpPacket(
+                dstAddr, srcAddr, dstPort, srcPort,
+                session.tunSeqNum, session.tunAckNum,
+                IpPacketUtils.TCP_FIN or IpPacketUtils.TCP_ACK
+            )
+            session.tunSeqNum++
+            writeTun(finAck)
+
+            session.close()
+            tcpSessions.remove(key)
+            emitEvent(EventType.TCP_CLOSE, 4, "TCP", srcAddr, srcPort, dstAddr, dstPort, 0)
+            return
+        }
+
+        // ACK + 数据: 转发到真实服务器
+        if (isAck && session.state == TCP_STATE_ESTABLISHED) {
+            val tcpHeaderLen = IpPacketUtils.extractTcpDataOffset(packet, ihl)
+            val payloadOffset = ihl + tcpHeaderLen
+            val payloadLen = length - payloadOffset
+
+            if (payloadLen > 0) {
+                val payload = packet.copyOfRange(payloadOffset, payloadOffset + payloadLen)
+                session.tunAckNum = seqNum + payloadLen
+
+                // ACK 回复
+                val ack = IpPacketUtils.buildTcpPacket(
+                    dstAddr, srcAddr, dstPort, srcPort,
+                    session.tunSeqNum, session.tunAckNum,
+                    IpPacketUtils.TCP_ACK
+                )
+                writeTun(ack)
+
+                // 异步转发数据到真实服务器
+                networkPool?.submit {
+                    try {
+                        session.realSocket?.getOutputStream()?.apply {
+                            write(payload)
+                            flush()
+                        }
+                    } catch (e: Exception) {
+                        Log.d(TAG, "TCP 转发失败 $key: ${e.message}")
+                        sendRstAndClose(session)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * [FIX-#1] 真实服务器 → TUN 方向的数据转发
+     */
+    private fun relayRealToTun(session: TcpSession) {
+        val sock = session.realSocket ?: return
+        val buffer = ByteArray(VPN_MTU - 40)  // 预留 IP+TCP 头空间
+
+        try {
+            val inputStream = sock.getInputStream()
+            while (isCapturing.get() && session.state == TCP_STATE_ESTABLISHED) {
+                val bytesRead = inputStream.read(buffer)
+                if (bytesRead <= 0) break
+
+                val payload = buffer.copyOf(bytesRead)
+
+                val dataPacket = IpPacketUtils.buildTcpPacket(
+                    session.dstAddr, session.srcAddr,
+                    session.dstPort, session.srcPort,
+                    session.tunSeqNum, session.tunAckNum,
+                    IpPacketUtils.TCP_ACK or IpPacketUtils.TCP_PSH,
+                    payload
+                )
+                session.tunSeqNum += bytesRead
+                writeTun(dataPacket)
+            }
+        } catch (e: Exception) {
+            if (session.state == TCP_STATE_ESTABLISHED) {
+                Log.d(TAG, "TCP relay 结束 ${session.key}: ${e.message}")
+            }
+        }
+
+        // 服务端关闭连接，发 FIN 给应用
+        if (session.state == TCP_STATE_ESTABLISHED) {
+            val fin = IpPacketUtils.buildTcpPacket(
+                session.dstAddr, session.srcAddr,
+                session.dstPort, session.srcPort,
+                session.tunSeqNum, session.tunAckNum,
+                IpPacketUtils.TCP_FIN or IpPacketUtils.TCP_ACK
+            )
+            session.tunSeqNum++
+            writeTun(fin)
+            session.state = TCP_STATE_FIN_WAIT
+        }
+    }
+
+    private fun sendRstAndClose(session: TcpSession) {
+        val rst = IpPacketUtils.buildRst(
+            session.dstAddr, session.srcAddr,
+            session.dstPort, session.srcPort,
+            session.tunSeqNum, session.tunAckNum
+        )
+        writeTun(rst)
+        session.close()
+        tcpSessions.remove(session.key)
+    }
+
+    // ======================================================
+    // [FIX-#1] UDP 包处理 — 转发 + 响应写回
+    // ======================================================
+
+    private fun handleUdpPacket(packet: ByteArray, ihl: Int, length: Int) {
+        if (length < ihl + 8) return
+
+        val srcAddr = IpPacketUtils.extractSrcAddr(packet)
+        val dstAddr = IpPacketUtils.extractDstAddr(packet)
+        val srcPort = IpPacketUtils.extractSrcPort(packet, ihl)
+        val dstPort = IpPacketUtils.extractDstPort(packet, ihl)
+
+        val udpHeaderStart = ihl
+        val udpTotalLen = ((packet[udpHeaderStart + 4].toInt() and 0xFF) shl 8) or
+                (packet[udpHeaderStart + 5].toInt() and 0xFF)
+        val payloadOffset = ihl + 8
+        val payloadLen = udpTotalLen - 8
+        if (payloadLen <= 0 || payloadOffset + payloadLen > length) return
+
+        val payload = packet.copyOfRange(payloadOffset, payloadOffset + payloadLen)
+
+        val isDns = dstPort == 53
+        if (isDns) dnsCount.incrementAndGet()
+
+        val eventType = if (isDns) EventType.DNS_QUERY else EventType.UDP_SEND
+        emitEvent(eventType, 4, "UDP", srcAddr, srcPort, dstAddr, dstPort, payloadLen.toLong())
+
+        val key = "${addrToString(srcAddr)}:$srcPort-${addrToString(dstAddr)}:$dstPort"
+
+        networkPool?.submit {
+            try {
+                val session = udpSessions.getOrPut(key) {
+                    UdpSession(key, srcAddr, dstAddr, srcPort, dstPort).also { s ->
+                        val sock = DatagramSocket()
+                        protect(sock)   // 关键：绕过 VPN 回环
+                        s.socket = sock
+                    }
+                }
+                session.lastActivity = System.currentTimeMillis()
+
+                val sock = session.socket ?: return@submit
+
+                val destAddr = InetAddress.getByAddress(dstAddr)
+                val sendPkt = DatagramPacket(payload, payload.size, destAddr, dstPort)
+                sock.send(sendPkt)
+
+                // 接收响应
+                val recvBuf = ByteArray(4096)
+                val recvPkt = DatagramPacket(recvBuf, recvBuf.size)
+                sock.soTimeout = 5000
+
+                try {
+                    sock.receive(recvPkt)
+                    val respData = recvPkt.data.copyOf(recvPkt.length)
+
+                    // 构造 IP+UDP 响应包写回 TUN
+                    val respPacket = IpPacketUtils.buildUdpResponsePacket(
+                        dstAddr, srcAddr,
+                        dstPort, srcPort,
+                        respData
+                    )
+                    writeTun(respPacket)
+                } catch (_: java.net.SocketTimeoutException) {
+                    // UDP 无响应是正常的
+                }
+
+            } catch (e: Exception) {
+                Log.d(TAG, "UDP 转发失败 $key: ${e.message}")
+                udpSessions.remove(key)?.close()
+            }
+        }
+    }
+
+    // ======================================================
+    //  TUN 写入（线程安全）
+    // ======================================================
+
+    private fun writeTun(packet: ByteArray) {
+        synchronized(tunWriteLock) {
+            try {
+                tunOutput?.write(packet)
+                tunOutput?.flush()
+            } catch (e: Exception) {
+                if (isCapturing.get()) {
+                    Log.w(TAG, "TUN 写入失败: ${e.message}")
+                }
+            }
+        }
+    }
+
+    // ======================================================
+    //  事件发射（集中管理）
+    // ======================================================
+
+    private fun emitEvent(
+        eventType: EventType, ipVersion: Int, protocol: String,
+        srcAddr: ByteArray, srcPort: Int,
+        dstAddr: ByteArray, dstPort: Int,
+        bytesSent: Long
+    ) {
+        val event = NetworkEvent(
+            timestamp = System.currentTimeMillis(),
+            eventType = eventType,
+            ipVersion = ipVersion,
+            protocol = protocol,
+            srcAddr = addrToString(srcAddr),
+            srcPort = srcPort,
+            dstAddr = addrToString(dstAddr),
+            dstPort = dstPort,
+            bytesSent = bytesSent,
+            pid = 0,
+            uid = resolveUid(protocol, addrToString(srcAddr), srcPort),
+            comm = ""
+        )
+
+        if (filterUids.isNotEmpty() && event.uid !in filterUids) return
+
+        if (queueCount.get() < maxQueueSize) {
+            eventQueue.offer(event)
+            queueCount.incrementAndGet()
+        }
+
+        onEventCaptured?.invoke(event)
+    }
+
+    // ======================================================
+    //  会话清理线程（每 30 秒）
+    // ======================================================
+
+    private inner class SessionCleanerRunnable : Runnable {
+        override fun run() {
+            while (isCapturing.get()) {
+                try {
+                    Thread.sleep(30_000)
+
+                    val expiredTcp = tcpSessions.entries.filter { it.value.isExpired() }
+                    for (entry in expiredTcp) {
+                        entry.value.close()
+                        tcpSessions.remove(entry.key)
+                    }
+
+                    val expiredUdp = udpSessions.entries.filter { it.value.isExpired() }
+                    for (entry in expiredUdp) {
+                        entry.value.close()
+                        udpSessions.remove(entry.key)
+                    }
+
+                    if (expiredTcp.isNotEmpty() || expiredUdp.isNotEmpty()) {
+                        Log.d(TAG, "会话清理: TCP=${expiredTcp.size} UDP=${expiredUdp.size} " +
+                                "活跃: TCP=${tcpSessions.size} UDP=${udpSessions.size}")
+                    }
+
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }
+    }
+
+    // ======================================================
+    //  UID 映射（读取 /proc/net/tcp|udp）
+    // ======================================================
+
+    fun resolveUid(protocol: String, srcAddr: String, srcPort: Int): Int {
+        val procFile = when (protocol) {
+            "TCP" -> "/proc/net/tcp"
+            "UDP" -> "/proc/net/udp"
+            else -> return -1
+        }
+
+        try {
+            val hexPort = String.format("%04X", srcPort)
+            val lines = java.io.File(procFile).readLines()
+            for (line in lines.drop(1)) {
+                val parts = line.trim().split("\\s+".toRegex())
+                if (parts.size < 8) continue
+                val localParts = parts[1].split(":")
+                if (localParts.size == 2 && localParts[1].equals(hexPort, ignoreCase = true)) {
+                    return parts[7].toIntOrNull() ?: -1
+                }
+            }
+        } catch (_: Exception) {}
+        return -1
+    }
+
+    // ======================================================
+    //  工具函数
+    // ======================================================
+
+    private fun addrToString(addr: ByteArray): String {
+        return try {
+            InetAddress.getByAddress(addr).hostAddress ?: "0.0.0.0"
+        } catch (_: Exception) {
+            "0.0.0.0"
+        }
+    }
+
+    // ======================================================
+    //  通知
+    // ======================================================
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "NetMonitor 网络监控",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "NetMonitor Pro VPN 抓包服务运行状态"
+                setShowBadge(false)
+            }
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(content: String): Notification {
+        val stopIntent = Intent(this, VpnCaptureService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPending = PendingIntent.getService(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("NetMonitor Pro")
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setOngoing(true)
+            .addAction(android.R.drawable.ic_media_pause, "停止监控", stopPending)
+            .build()
+    }
+
+    // ======================================================
+    //  公开方法
+    // ======================================================
+
+    fun getStats(): Map<String, Long> = mapOf(
+        "packets" to packetCount.get(),
+        "bytes" to byteCount.get(),
+        "tcp" to tcpCount.get(),
+        "udp" to udpCount.get(),
+        "dns" to dnsCount.get(),
+        "tcp_sessions" to tcpSessions.size.toLong(),
+        "udp_sessions" to udpSessions.size.toLong(),
+    )
+
+    fun drainEvents(): List<NetworkEvent> {
+        val events = mutableListOf<NetworkEvent>()
+        while (true) {
+            val event = eventQueue.poll() ?: break
+            queueCount.decrementAndGet()
+            events.add(event)
+        }
+        return events
+    }
+
+    fun resetStats() {
+        packetCount.set(0)
+        byteCount.set(0)
+        tcpCount.set(0)
+        udpCount.set(0)
+        dnsCount.set(0)
+    }
+}
