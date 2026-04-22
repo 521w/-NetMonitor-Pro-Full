@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
-// NetMonitor Pro — eBPF 内核态网络事件采集模块
-// 功能：hook TCP/UDP connect & sendmsg，采集完整五元组 + 元数据
+// NetMonitor Pro — eBPF（致命级修复版）
+// [FIX-#2] pid/tgid修正 [FIX-#5] kretprobe读地址 [FIX-#12] 补发TCP_CONNECT
 
 #include <linux/bpf.h>
 #include <linux/ptrace.h>
@@ -23,389 +23,250 @@
 #define IPPROTO_UDP 17
 #define TASK_COMM_LEN 16
 
-/* ────────────────────────── 数据结构 ────────────────────────── */
-
-// 网络事件类型
 enum event_type {
-    EVENT_TCP_CONNECT = 1,    // TCP 连接发起
-    EVENT_TCP_CONNECT_RET,    // TCP 连接结果（成功/失败）
-    EVENT_UDP_SEND,           // UDP 发送
-    EVENT_TCP_CLOSE,          // TCP 连接关闭
-    EVENT_DNS_QUERY,          // DNS 查询（目标端口 53）
+    EVENT_TCP_CONNECT = 1,
+    EVENT_TCP_CONNECT_RET,
+    EVENT_UDP_SEND,
+    EVENT_TCP_CLOSE,
+    EVENT_DNS_QUERY,
 };
 
-// IPv6 地址
-struct in6_addr_t {
-    __u8 addr[16];
-};
+struct in6_addr_t { __u8 addr[16]; };
 
-// 网络事件结构体 — 完整五元组 + 进程元数据
 struct net_event {
-    // === 时间戳 & 事件类型 ===
-    __u64 timestamp_ns;       // 内核单调时钟（纳秒）
-    __u32 event_type;         // enum event_type
-
-    // === 进程信息 ===
-    __u32 pid;                // 进程 ID
-    __u32 tgid;               // 线程组 ID
-    __u32 uid;                // 用户 ID
-    __u32 gid;                // 组 ID
-    char  comm[TASK_COMM_LEN]; // 进程名
-
-    // === 网络五元组 ===
-    __u8  ip_version;         // 4 = IPv4, 6 = IPv6
-    __u8  protocol;           // IPPROTO_TCP(6) / IPPROTO_UDP(17)
-    __u16 src_port;           // 源端口（主机字节序）
-    __u16 dst_port;           // 目标端口（主机字节序）
-    __u32 src_addr_v4;        // IPv4 源地址
-    __u32 dst_addr_v4;        // IPv4 目标地址
-    struct in6_addr_t src_addr_v6; // IPv6 源地址
-    struct in6_addr_t dst_addr_v6; // IPv6 目标地址
-
-    // === 连接元数据 ===
-    __u64 bytes_sent;         // 发送字节数（UDP 可用）
-    __s32 ret_val;            // 系统调用返回值（connect 结果）
-    __u16 addr_family;        // 地址族 AF_INET / AF_INET6
-    __u16 _pad;               // 对齐填充
-};
-
-/* ────────────────────────── BPF Maps ────────────────────────── */
-
-// Ring Buffer — 高性能事件输出通道
-struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 1 << 24);   // 16 MB
-} events SEC(".maps");
-
-// 存储 connect 入参，用于 kretprobe 关联
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 65536);
-    __type(key, __u64);             // pid_tgid
-    __type(value, struct net_event);
-} connect_args SEC(".maps");
-
-// 可配置过滤器 — 按 UID 过滤
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 256);
-    __type(key, __u32);             // uid
-    __type(value, __u8);            // 1 = 监控此 uid
-} uid_filter SEC(".maps");
-
-// 全局配置
-struct config {
-    __u8  filter_enabled;     // 0 = 全量采集, 1 = 按 uid_filter 过滤
-    __u8  capture_udp;        // 是否采集 UDP
+    __u64 timestamp_ns;
+    __u32 event_type;
+    __u32 pid;       // 线程ID (低32位)
+    __u32 tgid;      // 进程ID (高32位)
+    __u32 uid;
+    __u32 gid;
+    char  comm[TASK_COMM_LEN];
+    __u8  ip_version;
+    __u8  protocol;
+    __u16 src_port;
+    __u16 dst_port;
+    __u32 src_addr_v4;
+    __u32 dst_addr_v4;
+    struct in6_addr_t src_addr_v6;
+    struct in6_addr_t dst_addr_v6;
+    __u64 bytes_sent;
+    __s32 ret_val;
+    __u16 addr_family;
     __u16 _pad;
 };
 
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, struct config);
-} global_config SEC(".maps");
+// [FIX-#5] 只存sk指针+进程信息，kretprobe再读地址
+struct connect_info {
+    struct sock *sk;
+    __u64 timestamp_ns;
+    __u32 pid;
+    __u32 tgid;
+    __u32 uid;
+    __u32 gid;
+    __u8  ip_version;
+    __u8  _pad[3];
+    char  comm[TASK_COMM_LEN];
+};
 
-/* ────────────────────────── 工具函数 ────────────────────────── */
+struct { __uint(type, BPF_MAP_TYPE_RINGBUF); __uint(max_entries, 1 << 24); } events SEC(".maps");
+struct { __uint(type, BPF_MAP_TYPE_HASH); __uint(max_entries, 65536); __type(key, __u64); __type(value, struct connect_info); } connect_args SEC(".maps");
+struct { __uint(type, BPF_MAP_TYPE_HASH); __uint(max_entries, 256); __type(key, __u32); __type(value, __u8); } uid_filter SEC(".maps");
+struct config { __u8 filter_enabled; __u8 capture_udp; __u16 _pad; };
+struct { __uint(type, BPF_MAP_TYPE_ARRAY); __uint(max_entries, 1); __type(key, __u32); __type(value, struct config); } global_config SEC(".maps");
 
-// 检查是否需要过滤此 UID
 static __always_inline int should_filter(__u32 uid) {
     __u32 key = 0;
     struct config *cfg = bpf_map_lookup_elem(&global_config, &key);
-    if (!cfg || !cfg->filter_enabled)
-        return 0; // 不过滤，全量采集
-
+    if (!cfg || !cfg->filter_enabled) return 0;
     __u8 *val = bpf_map_lookup_elem(&uid_filter, &uid);
-    return val ? 0 : 1; // 在白名单中 → 不过滤
+    return val ? 0 : 1;
 }
 
-// 填充进程基础信息
-static __always_inline void fill_process_info(struct net_event *evt) {
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u64 uid_gid  = bpf_get_current_uid_gid();
-
-    evt->pid  = (__u32)(pid_tgid >> 32);
-    evt->tgid = (__u32)(pid_tgid);
-    evt->uid  = (__u32)(uid_gid);
-    evt->gid  = (__u32)(uid_gid >> 32);
-    evt->timestamp_ns = bpf_ktime_get_ns();
-
-    bpf_get_current_comm(&evt->comm, sizeof(evt->comm));
+// [FIX-#2] 高32=tgid(进程ID), 低32=pid(线程ID)
+static __always_inline void fill_ci(struct connect_info *ci) {
+    __u64 pt = bpf_get_current_pid_tgid();
+    __u64 ug = bpf_get_current_uid_gid();
+    ci->tgid = (__u32)(pt >> 32);
+    ci->pid  = (__u32)(pt);
+    ci->uid  = (__u32)(ug);
+    ci->gid  = (__u32)(ug >> 32);
+    ci->timestamp_ns = bpf_ktime_get_ns();
+    bpf_get_current_comm(&ci->comm, sizeof(ci->comm));
 }
 
-/* ════════════════════════════════════════════════════════════════
- *  TCP CONNECT — kprobe / kretprobe
- *  hook tcp_v4_connect + tcp_v6_connect
- * ════════════════════════════════════════════════════════════════ */
+static __always_inline void fill_evt(struct net_event *e) {
+    __u64 pt = bpf_get_current_pid_tgid();
+    __u64 ug = bpf_get_current_uid_gid();
+    e->tgid = (__u32)(pt >> 32);
+    e->pid  = (__u32)(pt);
+    e->uid  = (__u32)(ug);
+    e->gid  = (__u32)(ug >> 32);
+    e->timestamp_ns = bpf_ktime_get_ns();
+    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+}
 
-// ─── tcp_v4_connect 入口 ───
+static __always_inline void copy_pi(struct net_event *e, struct connect_info *c) {
+    e->pid = c->pid; e->tgid = c->tgid; e->uid = c->uid; e->gid = c->gid;
+    __builtin_memcpy(e->comm, c->comm, TASK_COMM_LEN);
+}
+
+// [FIX-#5] kretprobe时从sk读地址（此时内核已完成赋值）
+static __always_inline void read_v4(struct net_event *e, struct sock *sk) {
+    e->ip_version = 4; e->protocol = IPPROTO_TCP; e->addr_family = AF_INET;
+    BPF_CORE_READ_INTO(&e->dst_addr_v4, sk, __sk_common.skc_daddr);
+    BPF_CORE_READ_INTO(&e->src_addr_v4, sk, __sk_common.skc_rcv_saddr);
+    __u16 dp = 0; BPF_CORE_READ_INTO(&dp, sk, __sk_common.skc_dport); e->dst_port = bpf_ntohs(dp);
+    __u16 sp = 0; BPF_CORE_READ_INTO(&sp, sk, __sk_common.skc_num); e->src_port = sp;
+}
+
+static __always_inline void read_v6(struct net_event *e, struct sock *sk) {
+    e->ip_version = 6; e->protocol = IPPROTO_TCP; e->addr_family = AF_INET6;
+    BPF_CORE_READ_INTO(&e->dst_addr_v6, sk, __sk_common.skc_v6_daddr);
+    BPF_CORE_READ_INTO(&e->src_addr_v6, sk, __sk_common.skc_v6_rcv_saddr);
+    __u16 dp = 0; BPF_CORE_READ_INTO(&dp, sk, __sk_common.skc_dport); e->dst_port = bpf_ntohs(dp);
+    __u16 sp = 0; BPF_CORE_READ_INTO(&sp, sk, __sk_common.skc_num); e->src_port = sp;
+}
+
+// ═══ TCP v4 ═══
 SEC("kprobe/tcp_v4_connect")
-int BPF_KPROBE(kprobe_tcp_v4_connect, struct sock *sk) {
-    struct net_event evt = {};
-    fill_process_info(&evt);
-
-    if (should_filter(evt.uid))
-        return 0;
-
-    evt.event_type  = EVENT_TCP_CONNECT;
-    evt.ip_version  = 4;
-    evt.protocol    = IPPROTO_TCP;
-    evt.addr_family = AF_INET;
-
-    // 读取目标地址（connect 时 sk 已填充 daddr/dport）
-    BPF_CORE_READ_INTO(&evt.dst_addr_v4, sk, __sk_common.skc_daddr);
-    BPF_CORE_READ_INTO(&evt.src_addr_v4, sk, __sk_common.skc_rcv_saddr);
-
-    __u16 dport = 0;
-    BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
-    evt.dst_port = bpf_ntohs(dport);
-
-    __u16 sport = 0;
-    BPF_CORE_READ_INTO(&sport, sk, __sk_common.skc_num);
-    evt.src_port = sport; // skc_num 已经是主机序
-
-    // 暂存到 map，等 kretprobe 补充返回值
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    bpf_map_update_elem(&connect_args, &pid_tgid, &evt, BPF_ANY);
-
+int BPF_KPROBE(kp_tcp4, struct sock *sk) {
+    struct connect_info ci = {};
+    fill_ci(&ci);
+    if (should_filter(ci.uid)) return 0;
+    ci.sk = sk; ci.ip_version = 4;
+    __u64 pt = bpf_get_current_pid_tgid();
+    bpf_map_update_elem(&connect_args, &pt, &ci, BPF_ANY);
     return 0;
 }
 
-// ─── tcp_v4_connect 返回 ───
 SEC("kretprobe/tcp_v4_connect")
-int BPF_KRETPROBE(kretprobe_tcp_v4_connect, int ret) {
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
+int BPF_KRETPROBE(krp_tcp4, int ret) {
+    __u64 pt = bpf_get_current_pid_tgid();
+    struct connect_info *ci = bpf_map_lookup_elem(&connect_args, &pt);
+    if (!ci) return 0;
+    struct sock *sk = ci->sk;
+    struct connect_info cc = {}; __builtin_memcpy(&cc, ci, sizeof(cc));
+    bpf_map_delete_elem(&connect_args, &pt);
 
-    struct net_event *evt_ptr = bpf_map_lookup_elem(&connect_args, &pid_tgid);
-    if (!evt_ptr)
-        return 0;
-
-    // 拷贝并补充返回值
-    struct net_event *out = bpf_ringbuf_reserve(&events, sizeof(struct net_event), 0);
-    if (!out) {
-        bpf_map_delete_elem(&connect_args, &pid_tgid);
-        return 0;
+    // [FIX-#12] 事件1: TCP_CONNECT
+    struct net_event *e1 = bpf_ringbuf_reserve(&events, sizeof(*e1), 0);
+    if (e1) {
+        __builtin_memset(e1, 0, sizeof(*e1));
+        copy_pi(e1, &cc); e1->timestamp_ns = cc.timestamp_ns;
+        e1->event_type = EVENT_TCP_CONNECT;
+        read_v4(e1, sk); bpf_ringbuf_submit(e1, 0);
     }
-
-    __builtin_memcpy(out, evt_ptr, sizeof(struct net_event));
-    out->event_type = EVENT_TCP_CONNECT_RET;
-    out->ret_val    = ret;
-    out->timestamp_ns = bpf_ktime_get_ns();
-
-    bpf_ringbuf_submit(out, 0);
-    bpf_map_delete_elem(&connect_args, &pid_tgid);
-
+    // [FIX-#12] 事件2: TCP_CONNECT_RET
+    struct net_event *e2 = bpf_ringbuf_reserve(&events, sizeof(*e2), 0);
+    if (e2) {
+        __builtin_memset(e2, 0, sizeof(*e2));
+        copy_pi(e2, &cc); e2->timestamp_ns = bpf_ktime_get_ns();
+        e2->event_type = EVENT_TCP_CONNECT_RET; e2->ret_val = ret;
+        read_v4(e2, sk); bpf_ringbuf_submit(e2, 0);
+    }
     return 0;
 }
 
-// ─── tcp_v6_connect 入口 ───
+// ═══ TCP v6 ═══
 SEC("kprobe/tcp_v6_connect")
-int BPF_KPROBE(kprobe_tcp_v6_connect, struct sock *sk) {
-    struct net_event evt = {};
-    fill_process_info(&evt);
-
-    if (should_filter(evt.uid))
-        return 0;
-
-    evt.event_type  = EVENT_TCP_CONNECT;
-    evt.ip_version  = 6;
-    evt.protocol    = IPPROTO_TCP;
-    evt.addr_family = AF_INET6;
-
-    // 读取 IPv6 地址
-    BPF_CORE_READ_INTO(&evt.dst_addr_v6, sk,
-                        __sk_common.skc_v6_daddr);
-    BPF_CORE_READ_INTO(&evt.src_addr_v6, sk,
-                        __sk_common.skc_v6_rcv_saddr);
-
-    __u16 dport = 0;
-    BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
-    evt.dst_port = bpf_ntohs(dport);
-
-    __u16 sport = 0;
-    BPF_CORE_READ_INTO(&sport, sk, __sk_common.skc_num);
-    evt.src_port = sport;
-
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    bpf_map_update_elem(&connect_args, &pid_tgid, &evt, BPF_ANY);
-
+int BPF_KPROBE(kp_tcp6, struct sock *sk) {
+    struct connect_info ci = {};
+    fill_ci(&ci);
+    if (should_filter(ci.uid)) return 0;
+    ci.sk = sk; ci.ip_version = 6;
+    __u64 pt = bpf_get_current_pid_tgid();
+    bpf_map_update_elem(&connect_args, &pt, &ci, BPF_ANY);
     return 0;
 }
 
-// ─── tcp_v6_connect 返回 ───
 SEC("kretprobe/tcp_v6_connect")
-int BPF_KRETPROBE(kretprobe_tcp_v6_connect, int ret) {
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
+int BPF_KRETPROBE(krp_tcp6, int ret) {
+    __u64 pt = bpf_get_current_pid_tgid();
+    struct connect_info *ci = bpf_map_lookup_elem(&connect_args, &pt);
+    if (!ci) return 0;
+    struct sock *sk = ci->sk;
+    struct connect_info cc = {}; __builtin_memcpy(&cc, ci, sizeof(cc));
+    bpf_map_delete_elem(&connect_args, &pt);
 
-    struct net_event *evt_ptr = bpf_map_lookup_elem(&connect_args, &pid_tgid);
-    if (!evt_ptr)
-        return 0;
-
-    struct net_event *out = bpf_ringbuf_reserve(&events, sizeof(struct net_event), 0);
-    if (!out) {
-        bpf_map_delete_elem(&connect_args, &pid_tgid);
-        return 0;
+    struct net_event *e1 = bpf_ringbuf_reserve(&events, sizeof(*e1), 0);
+    if (e1) {
+        __builtin_memset(e1, 0, sizeof(*e1));
+        copy_pi(e1, &cc); e1->timestamp_ns = cc.timestamp_ns;
+        e1->event_type = EVENT_TCP_CONNECT; read_v6(e1, sk);
+        bpf_ringbuf_submit(e1, 0);
     }
-
-    __builtin_memcpy(out, evt_ptr, sizeof(struct net_event));
-    out->event_type = EVENT_TCP_CONNECT_RET;
-    out->ret_val    = ret;
-    out->timestamp_ns = bpf_ktime_get_ns();
-
-    bpf_ringbuf_submit(out, 0);
-    bpf_map_delete_elem(&connect_args, &pid_tgid);
-
+    struct net_event *e2 = bpf_ringbuf_reserve(&events, sizeof(*e2), 0);
+    if (e2) {
+        __builtin_memset(e2, 0, sizeof(*e2));
+        copy_pi(e2, &cc); e2->timestamp_ns = bpf_ktime_get_ns();
+        e2->event_type = EVENT_TCP_CONNECT_RET; e2->ret_val = ret;
+        read_v6(e2, sk); bpf_ringbuf_submit(e2, 0);
+    }
     return 0;
 }
 
-/* ════════════════════════════════════════════════════════════════
- *  UDP SENDMSG — kprobe
- *  hook udp_sendmsg + udpv6_sendmsg
- * ════════════════════════════════════════════════════════════════ */
-
+// ═══ UDP v4 ═══
 SEC("kprobe/udp_sendmsg")
-int BPF_KPROBE(kprobe_udp_sendmsg, struct sock *sk, struct msghdr *msg,
-               size_t len) {
-    // 检查全局配置是否开启 UDP 采集
-    __u32 key = 0;
-    struct config *cfg = bpf_map_lookup_elem(&global_config, &key);
-    if (cfg && !cfg->capture_udp)
-        return 0;
-
-    struct net_event *evt = bpf_ringbuf_reserve(&events, sizeof(struct net_event), 0);
-    if (!evt)
-        return 0;
-
-    __builtin_memset(evt, 0, sizeof(struct net_event));
-    fill_process_info(evt);
-
-    if (should_filter(evt->uid)) {
-        bpf_ringbuf_discard(evt, 0);
-        return 0;
-    }
-
-    evt->event_type  = EVENT_UDP_SEND;
-    evt->ip_version  = 4;
-    evt->protocol    = IPPROTO_UDP;
-    evt->addr_family = AF_INET;
-    evt->bytes_sent  = (__u64)len;
-
-    BPF_CORE_READ_INTO(&evt->dst_addr_v4, sk, __sk_common.skc_daddr);
-    BPF_CORE_READ_INTO(&evt->src_addr_v4, sk, __sk_common.skc_rcv_saddr);
-
-    __u16 dport = 0;
-    BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
-    evt->dst_port = bpf_ntohs(dport);
-
-    __u16 sport = 0;
-    BPF_CORE_READ_INTO(&sport, sk, __sk_common.skc_num);
-    evt->src_port = sport;
-
-    // 标记 DNS 查询（目标端口 53）
-    if (evt->dst_port == 53)
-        evt->event_type = EVENT_DNS_QUERY;
-
-    bpf_ringbuf_submit(evt, 0);
-    return 0;
+int BPF_KPROBE(kp_udp4, struct sock *sk, struct msghdr *msg, size_t len) {
+    __u32 k = 0;
+    struct config *cfg = bpf_map_lookup_elem(&global_config, &k);
+    if (cfg && !cfg->capture_udp) return 0;
+    struct net_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) return 0;
+    __builtin_memset(e, 0, sizeof(*e)); fill_evt(e);
+    if (should_filter(e->uid)) { bpf_ringbuf_discard(e, 0); return 0; }
+    e->event_type = EVENT_UDP_SEND; e->ip_version = 4;
+    e->protocol = IPPROTO_UDP; e->addr_family = AF_INET; e->bytes_sent = (__u64)len;
+    BPF_CORE_READ_INTO(&e->dst_addr_v4, sk, __sk_common.skc_daddr);
+    BPF_CORE_READ_INTO(&e->src_addr_v4, sk, __sk_common.skc_rcv_saddr);
+    __u16 dp = 0; BPF_CORE_READ_INTO(&dp, sk, __sk_common.skc_dport); e->dst_port = bpf_ntohs(dp);
+    __u16 sp = 0; BPF_CORE_READ_INTO(&sp, sk, __sk_common.skc_num); e->src_port = sp;
+    if (e->dst_port == 53) e->event_type = EVENT_DNS_QUERY;
+    bpf_ringbuf_submit(e, 0); return 0;
 }
 
+// ═══ UDP v6 ═══
 SEC("kprobe/udpv6_sendmsg")
-int BPF_KPROBE(kprobe_udpv6_sendmsg, struct sock *sk, struct msghdr *msg,
-               size_t len) {
-    __u32 key = 0;
-    struct config *cfg = bpf_map_lookup_elem(&global_config, &key);
-    if (cfg && !cfg->capture_udp)
-        return 0;
-
-    struct net_event *evt = bpf_ringbuf_reserve(&events, sizeof(struct net_event), 0);
-    if (!evt)
-        return 0;
-
-    __builtin_memset(evt, 0, sizeof(struct net_event));
-    fill_process_info(evt);
-
-    if (should_filter(evt->uid)) {
-        bpf_ringbuf_discard(evt, 0);
-        return 0;
-    }
-
-    evt->event_type  = EVENT_UDP_SEND;
-    evt->ip_version  = 6;
-    evt->protocol    = IPPROTO_UDP;
-    evt->addr_family = AF_INET6;
-    evt->bytes_sent  = (__u64)len;
-
-    BPF_CORE_READ_INTO(&evt->dst_addr_v6, sk, __sk_common.skc_v6_daddr);
-    BPF_CORE_READ_INTO(&evt->src_addr_v6, sk, __sk_common.skc_v6_rcv_saddr);
-
-    __u16 dport = 0;
-    BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
-    evt->dst_port = bpf_ntohs(dport);
-
-    __u16 sport = 0;
-    BPF_CORE_READ_INTO(&sport, sk, __sk_common.skc_num);
-    evt->src_port = sport;
-
-    if (evt->dst_port == 53)
-        evt->event_type = EVENT_DNS_QUERY;
-
-    bpf_ringbuf_submit(evt, 0);
-    return 0;
+int BPF_KPROBE(kp_udp6, struct sock *sk, struct msghdr *msg, size_t len) {
+    __u32 k = 0;
+    struct config *cfg = bpf_map_lookup_elem(&global_config, &k);
+    if (cfg && !cfg->capture_udp) return 0;
+    struct net_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) return 0;
+    __builtin_memset(e, 0, sizeof(*e)); fill_evt(e);
+    if (should_filter(e->uid)) { bpf_ringbuf_discard(e, 0); return 0; }
+    e->event_type = EVENT_UDP_SEND; e->ip_version = 6;
+    e->protocol = IPPROTO_UDP; e->addr_family = AF_INET6; e->bytes_sent = (__u64)len;
+    BPF_CORE_READ_INTO(&e->dst_addr_v6, sk, __sk_common.skc_v6_daddr);
+    BPF_CORE_READ_INTO(&e->src_addr_v6, sk, __sk_common.skc_v6_rcv_saddr);
+    __u16 dp = 0; BPF_CORE_READ_INTO(&dp, sk, __sk_common.skc_dport); e->dst_port = bpf_ntohs(dp);
+    __u16 sp = 0; BPF_CORE_READ_INTO(&sp, sk, __sk_common.skc_num); e->src_port = sp;
+    if (e->dst_port == 53) e->event_type = EVENT_DNS_QUERY;
+    bpf_ringbuf_submit(e, 0); return 0;
 }
 
-/* ════════════════════════════════════════════════════════════════
- *  TCP CLOSE — 连接关闭事件
- * ════════════════════════════════════════════════════════════════ */
-
+// ═══ TCP CLOSE ═══
 SEC("kprobe/tcp_close")
-int BPF_KPROBE(kprobe_tcp_close, struct sock *sk) {
-    struct net_event *evt = bpf_ringbuf_reserve(&events, sizeof(struct net_event), 0);
-    if (!evt)
-        return 0;
-
-    __builtin_memset(evt, 0, sizeof(struct net_event));
-    fill_process_info(evt);
-
-    if (should_filter(evt->uid)) {
-        bpf_ringbuf_discard(evt, 0);
-        return 0;
-    }
-
-    evt->event_type = EVENT_TCP_CLOSE;
-    evt->protocol   = IPPROTO_TCP;
-
-    // 判断地址族
-    __u16 family = 0;
-    BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
-    evt->addr_family = family;
-
-    if (family == AF_INET) {
-        evt->ip_version = 4;
-        BPF_CORE_READ_INTO(&evt->dst_addr_v4, sk, __sk_common.skc_daddr);
-        BPF_CORE_READ_INTO(&evt->src_addr_v4, sk, __sk_common.skc_rcv_saddr);
-    } else if (family == AF_INET6) {
-        evt->ip_version = 6;
-        BPF_CORE_READ_INTO(&evt->dst_addr_v6, sk, __sk_common.skc_v6_daddr);
-        BPF_CORE_READ_INTO(&evt->src_addr_v6, sk, __sk_common.skc_v6_rcv_saddr);
-    } else {
-        bpf_ringbuf_discard(evt, 0);
-        return 0;
-    }
-
-    __u16 dport = 0;
-    BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
-    evt->dst_port = bpf_ntohs(dport);
-
-    __u16 sport = 0;
-    BPF_CORE_READ_INTO(&sport, sk, __sk_common.skc_num);
-    evt->src_port = sport;
-
-    // 读取发送字节数
-    BPF_CORE_READ_INTO(&evt->bytes_sent, sk, sk_wmem_queued);
-
-    bpf_ringbuf_submit(evt, 0);
-    return 0;
+int BPF_KPROBE(kp_tcp_close, struct sock *sk) {
+    struct net_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) return 0;
+    __builtin_memset(e, 0, sizeof(*e)); fill_evt(e);
+    if (should_filter(e->uid)) { bpf_ringbuf_discard(e, 0); return 0; }
+    e->event_type = EVENT_TCP_CLOSE; e->protocol = IPPROTO_TCP;
+    __u16 fam = 0; BPF_CORE_READ_INTO(&fam, sk, __sk_common.skc_family); e->addr_family = fam;
+    if (fam == AF_INET) {
+        e->ip_version = 4;
+        BPF_CORE_READ_INTO(&e->dst_addr_v4, sk, __sk_common.skc_daddr);
+        BPF_CORE_READ_INTO(&e->src_addr_v4, sk, __sk_common.skc_rcv_saddr);
+    } else if (fam == AF_INET6) {
+        e->ip_version = 6;
+        BPF_CORE_READ_INTO(&e->dst_addr_v6, sk, __sk_common.skc_v6_daddr);
+        BPF_CORE_READ_INTO(&e->src_addr_v6, sk, __sk_common.skc_v6_rcv_saddr);
+    } else { bpf_ringbuf_discard(e, 0); return 0; }
+    __u16 dp = 0; BPF_CORE_READ_INTO(&dp, sk, __sk_common.skc_dport); e->dst_port = bpf_ntohs(dp);
+    __u16 sp = 0; BPF_CORE_READ_INTO(&sp, sk, __sk_common.skc_num); e->src_port = sp;
+    BPF_CORE_READ_INTO(&e->bytes_sent, sk, sk_wmem_queued);
+    bpf_ringbuf_submit(e, 0); return 0;
 }
 
 char LICENSE[] SEC("license") = "GPL";
