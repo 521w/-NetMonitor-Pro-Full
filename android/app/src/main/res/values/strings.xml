@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NetMonitor Pro</string>
-    <string name="xposed_description">网络流量监控与安全分析模块</string>
 </resources>

@@ -1,17 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.NetMonitor" parent="Theme.MaterialComponents.NoActionBar">
-        <item name="colorPrimary">#4FC3F7</item>
-        <item name="colorPrimaryVariant">#0288D1</item>
-        <item name="colorOnPrimary">#0D1B2A</item>
-        <item name="colorSecondary">#66BB6A</item>
-        <item name="colorOnSecondary">#0D1B2A</item>
-        <item name="android:colorBackground">#0D1B2A</item>
-        <item name="colorSurface">#1B2838</item>
-        <item name="colorOnSurface">#E0E0E0</item>
-        <item name="android:statusBarColor">#0D1B2A</item>
-        <item name="android:navigationBarColor">#0D1B2A</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="preferenceTheme">@style/PreferenceThemeOverlay</item>
+    <style name="Theme.NetMonitor" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#1976D2</item>
+        <item name="colorPrimaryVariant">#0D47A1</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#26A69A</item>
     </style>
 </resources>
